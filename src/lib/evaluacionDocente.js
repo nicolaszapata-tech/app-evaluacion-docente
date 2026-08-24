@@ -138,13 +138,28 @@ export async function togglearMesActivo(mes, activo) {
   return respuesta.json();
 }
 
+/** { stats: [participación por categoria+mes vs cupos_activos], detalle:
+ *  [promedio de cada pregunta Likert por categoria+mes, más una entrada
+ *  "Todas" por mes con el promedio global combinado] }. El webhook
+ *  ("EVALUACION DOCENTE — Panel staff") calcula todo con la service key
+ *  sobre consolidada_respuestas_evaluacion_docente -- anon no puede leer
+ *  esa tabla directo (sin policy de SELECT, ver evaluacionDocente.js). */
 export async function fetchStatsEvaluacionDocente() {
+  const { stats } = await fetchStatsYDetalle();
+  return stats;
+}
+
+export async function fetchDetalleEvaluacionDocente() {
+  return fetchStatsYDetalle();
+}
+
+async function fetchStatsYDetalle() {
   const respuesta = await fetch(`${WEBHOOK_BASE}/${WEBHOOK_PATH}`, {
     method: 'POST',
     headers: webhookHeaders(),
     body: JSON.stringify({ accion: 'stats' }),
   });
   if (!respuesta.ok) throw new Error(`El workflow respondió HTTP ${respuesta.status}.`);
-  const { stats } = await respuesta.json();
-  return stats || [];
+  const { stats, detalle } = await respuesta.json();
+  return { stats: stats || [], detalle: detalle || [] };
 }
