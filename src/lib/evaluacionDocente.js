@@ -86,6 +86,21 @@ export async function fetchOpcionesFormulario(categoria, mes) {
   };
 }
 
+/** Tabla de grupos con evaluación docente, tal cual sale de la hoja
+ *  ENCUESTAS DE SATISFACCION (09_Base_Evaluacion_Docente.gs) -- para la
+ *  vista "Tabla" del panel staff. */
+export async function fetchGruposEvaluacionDocente() {
+  const { data, error } = await supabase
+    .from('base_de_grupos_evaluacion_docente')
+    .select(
+      'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, subject_name, horario, seccion, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
+    )
+    .order('mes_calificacion', { ascending: true })
+    .order('categoria_programa', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
 /** El id del estudiante se genera en el navegador (crypto.randomUUID) en vez
  *  de leerlo de vuelta con RETURNING -- las tablas son INSERT-only para
  *  anon (sin policy de SELECT, a propósito, para que nadie con la key
@@ -101,7 +116,7 @@ export async function enviarEvaluacionDocente({ identidad, respuestas }) {
   if (errEstudiante) throw errEstudiante;
 
   const { error: errRespuestas } = await supabase
-    .from('respuestas_evaluacion_docente')
+    .from('consolidada_respuestas_evaluacion_docente')
     .insert({ ...respuestas, estudiante_id: estudianteId });
   if (errRespuestas) throw errRespuestas;
 }
