@@ -418,7 +418,12 @@ function EvaluacionesActivas({ meses, activos, onToggle }) {
         {meses.map((mes) => (
           <div key={mes} className="flex items-center justify-between bg-ink-800 border border-ink-600 rounded-md px-3 py-2">
             <span className="text-sm text-slate-200">{mes}</span>
-            <Switch activo={!!activos[mes]} onClick={() => onToggle(mes)} />
+            <div className="flex items-center gap-2">
+              <span className={'text-xs font-medium ' + (activos[mes] ? 'text-accent-300' : 'text-slate-500')}>
+                {activos[mes] ? 'Activado' : 'Desactivado'}
+              </span>
+              <Switch activo={!!activos[mes]} onClick={() => onToggle(mes)} />
+            </div>
           </div>
         ))}
       </div>
@@ -470,15 +475,18 @@ function Switch({ activo, onClick }) {
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={activo}
       onClick={onClick}
       className={
-        'relative w-10 h-5.5 rounded-full transition-colors ' + (activo ? 'bg-accent-500' : 'bg-ink-600')
+        'relative inline-flex shrink-0 w-11 h-6 rounded-full border transition-colors cursor-pointer ' +
+        (activo ? 'bg-accent-500 border-accent-500' : 'bg-ink-700 border-ink-500')
       }
     >
       <span
         className={
-          'absolute top-0.5 w-4.5 h-4.5 rounded-full bg-white transition-transform ' +
-          (activo ? 'translate-x-[19px]' : 'translate-x-0.5')
+          'absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ' +
+          (activo ? 'translate-x-5' : 'translate-x-0.5')
         }
       />
     </button>
