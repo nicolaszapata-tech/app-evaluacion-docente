@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Combobox from '../components/Combobox.jsx';
+import { normalizar } from '../lib/normalizar.js';
 import {
   CATEGORIAS_EVALUACION_DOCENTE,
   fetchDetalleEvaluacionDocente,
@@ -64,7 +66,7 @@ export default function EvaluacionDocentePanel() {
         {error && (
           <div className="mb-4 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>
         )}
-        {vista === VISTAS.TABLA ? <TablaGrupos /> : <Estadisticas meses={meses} />}
+        {vista === VISTAS.TABLA ? <TablaGrupos meses={meses} activos={activos} /> : <Estadisticas meses={meses} />}
       </div>
     </div>
   );
@@ -97,11 +99,15 @@ function NavLateral({ vista, onCambiarVista }) {
   );
 }
 
-function TablaGrupos() {
+function TablaGrupos({ meses, activos }) {
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
-  const [busqueda, setBusqueda] = useState('');
+
+  const [mesesElegidos, setMesesElegidos] = useState(() => new Set(meses.filter((m) => activos[m])));
+  const [categoriasElegidas, setCategoriasElegidas] = useState(() => new Set(CATEGORIAS_EVALUACION_DOCENTE));
+  const [materiaTexto, setMateriaTexto] = useState('');
+  const [tutorTexto, setTutorTexto] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -115,25 +121,81 @@ function TablaGrupos() {
     })();
   }, []);
 
-  const q = busqueda.trim().toLowerCase();
-  const filasFiltradas = q
-    ? filas.filter((f) => Object.values(f).some((v) => String(v ?? '').toLowerCase().includes(q)))
-    : filas;
+  function toggleEnSet(set, setSet, valor) {
+    setSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(valor)) next.delete(valor);
+      else next.add(valor);
+      return next;
+    });
+  }
+
+  const materias = useMemo(
+    () => Array.from(new Set(filas.map((f) => f.subject_name).filter(Boolean))).sort(),
+    [filas]
+  );
+  const tutores = useMemo(
+    () => Array.from(new Set(filas.map((f) => f.tutor_calendario).filter(Boolean))).sort(),
+    [filas]
+  );
+
+  const materiaQ = normalizar(materiaTexto);
+  const tutorQ = normalizar(tutorTexto);
+  const filasFiltradas = filas.filter((f) => {
+    if (mesesElegidos.size && !mesesElegidos.has(f.mes_calificacion)) return false;
+    if (categoriasElegidas.size && !categoriasElegidas.has(f.categoria_programa)) return false;
+    if (materiaQ && !normalizar(f.subject_name).includes(materiaQ)) return false;
+    if (tutorQ && !normalizar(f.tutor_calendario).includes(tutorQ)) return false;
+    return true;
+  });
 
   return (
     <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-100">Grupos con evaluación docente</h2>
+        <p className="text-xs text-slate-400 mt-0.5">{filasFiltradas.length} de {filas.length} grupo(s)</p>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4">
         <div>
-          <h2 className="text-sm font-semibold text-slate-100">Grupos con evaluación docente</h2>
-          <p className="text-xs text-slate-400 mt-0.5">{filasFiltradas.length} de {filas.length} grupo(s)</p>
+          <p className="text-xs text-slate-400 mb-1.5">Mes de calificación</p>
+          <div className="flex flex-wrap gap-1.5">
+            {meses.map((mes) => (
+              <ChipFiltro
+                key={mes}
+                activo={mesesElegidos.has(mes)}
+                onClick={() => toggleEnSet(mesesElegidos, setMesesElegidos, mes)}
+              >
+                {mes}{activos[mes] && ' ●'}
+              </ChipFiltro>
+            ))}
+          </div>
         </div>
-        <input
-          type="text"
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar…"
-          className="w-48 bg-ink-800 border border-ink-600 rounded-md px-3 py-1.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-accent-500 focus:border-accent-500"
-        />
+
+        <div>
+          <p className="text-xs text-slate-400 mb-1.5">Categoría de programa</p>
+          <div className="flex flex-wrap gap-1.5">
+            {CATEGORIAS_EVALUACION_DOCENTE.map((categoria) => (
+              <ChipFiltro
+                key={categoria}
+                activo={categoriasElegidas.has(categoria)}
+                onClick={() => toggleEnSet(categoriasElegidas, setCategoriasElegidas, categoria)}
+              >
+                {categoria}
+              </ChipFiltro>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs text-slate-400 mb-1.5">Materia</p>
+          <Combobox value={materiaTexto} onChange={setMateriaTexto} options={materias} placeholder="Escribir o elegir materia" />
+        </div>
+
+        <div>
+          <p className="text-xs text-slate-400 mb-1.5">Tutor</p>
+          <Combobox value={tutorTexto} onChange={setTutorTexto} options={tutores} placeholder="Escribir o elegir tutor" />
+        </div>
       </div>
 
       {error && <div className="text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>}
@@ -182,6 +244,23 @@ function TablaGrupos() {
         </div>
       )}
     </section>
+  );
+}
+
+function ChipFiltro({ activo, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        'text-xs rounded-md px-2.5 py-1 border transition-colors ' +
+        (activo
+          ? 'bg-accent-500/15 border-accent-500 text-accent-300'
+          : 'bg-ink-800 border-ink-600 text-slate-400 hover:border-ink-500')
+      }
+    >
+      {children}
+    </button>
   );
 }
 
