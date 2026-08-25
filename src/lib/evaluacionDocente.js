@@ -89,11 +89,19 @@ export async function fetchOpcionesFormulario(categoria, mes) {
 /** Tabla de grupos con evaluación docente, tal cual sale de la hoja
  *  ENCUESTAS DE SATISFACCION (09_Base_Evaluacion_Docente.gs) -- para la
  *  vista "Tabla" del panel staff. */
+/** "2026-08-10" (formato fecha de Postgres) -> "10/08/2026". */
+export function formatearFechaDDMMYYYY(iso) {
+  if (!iso) return '';
+  const [anio, mes, dia] = String(iso).split('-');
+  if (!anio || !mes || !dia) return iso;
+  return `${dia}/${mes}/${anio}`;
+}
+
 export async function fetchGruposEvaluacionDocente() {
   const { data, error } = await supabase
     .from('base_de_grupos_evaluacion_docente')
     .select(
-      'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, subject_name, horario, seccion, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
+      'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, horario, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
     )
     .order('mes_calificacion', { ascending: true })
     .order('categoria_programa', { ascending: true });

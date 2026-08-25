@@ -5,6 +5,7 @@ import {
   CATEGORIAS_EVALUACION_DOCENTE,
   fetchDetalleEvaluacionDocente,
   fetchGruposEvaluacionDocente,
+  formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
   fetchMesesDisponibles,
   slug,
@@ -131,7 +132,7 @@ function TablaGrupos({ meses, activos }) {
   }
 
   const materias = useMemo(
-    () => Array.from(new Set(filas.map((f) => f.subject_name).filter(Boolean))).sort(),
+    () => Array.from(new Set(filas.map((f) => f.materia).filter(Boolean))).sort(),
     [filas]
   );
   const tutores = useMemo(
@@ -144,7 +145,7 @@ function TablaGrupos({ meses, activos }) {
   const filasFiltradas = filas.filter((f) => {
     if (mesesElegidos.size && !mesesElegidos.has(f.mes_calificacion)) return false;
     if (categoriasElegidas.size && !categoriasElegidas.has(f.categoria_programa)) return false;
-    if (materiaQ && !normalizar(f.subject_name).includes(materiaQ)) return false;
+    if (materiaQ && !normalizar(f.materia).includes(materiaQ)) return false;
     if (tutorQ && !normalizar(f.tutor_calendario).includes(tutorQ)) return false;
     return true;
   });
@@ -212,9 +213,7 @@ function TablaGrupos({ meses, activos }) {
                 <Th>Section ID</Th>
                 <Th>categoria_programa</Th>
                 <Th>Materia</Th>
-                <Th>subject_name</Th>
                 <Th>Horario</Th>
-                <Th>Sección</Th>
                 <Th>Fecha calendario Inicio</Th>
                 <Th>Fecha calendario Fin</Th>
                 <Th>Tutor Calendario</Th>
@@ -230,11 +229,9 @@ function TablaGrupos({ meses, activos }) {
                   <Td>{f.section_id}</Td>
                   <Td>{f.categoria_programa}</Td>
                   <Td>{f.materia}</Td>
-                  <Td>{f.subject_name}</Td>
                   <Td>{f.horario}</Td>
-                  <Td>{f.seccion}</Td>
-                  <Td>{f.fecha_calendario_inicio}</Td>
-                  <Td>{f.fecha_calendario_fin}</Td>
+                  <Td>{formatearFechaDDMMYYYY(f.fecha_calendario_inicio)}</Td>
+                  <Td>{formatearFechaDDMMYYYY(f.fecha_calendario_fin)}</Td>
                   <Td>{f.tutor_calendario}</Td>
                   <Td right>{f.cupos_activos ?? '—'}</Td>
                 </tr>
