@@ -104,7 +104,8 @@ export async function fetchGruposEvaluacionDocente() {
       'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, horario, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
     )
     .order('mes_calificacion', { ascending: true })
-    .order('categoria_programa', { ascending: true });
+    .order('categoria_programa', { ascending: true })
+    .order('id_grupo_mapeo', { ascending: true });
   if (error) throw error;
   return data || [];
 }
