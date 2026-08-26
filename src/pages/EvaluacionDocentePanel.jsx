@@ -5,6 +5,7 @@ import { normalizar } from '../lib/normalizar.js';
 import {
   CATEGORIAS_EVALUACION_DOCENTE,
   colorDeMes,
+  fetchCrudoHistoricoEneroJulio,
   fetchGruposEvaluacionDocente,
   formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
@@ -12,6 +13,7 @@ import {
   fetchStatsYCrudo,
   icWilson,
   matrizCorrelacion,
+  MES_HISTORICO_ENERO_JULIO,
   PREGUNTAS_LIKERT_KEYS,
   resumenDeFilas,
   slug,
@@ -356,6 +358,7 @@ const N_MINIMO_CORRELACION = 10;
 
 function Estadisticas({ meses }) {
   const [crudo, setCrudo] = useState(null);
+  const [crudoHistorico, setCrudoHistorico] = useState(null);
   const [stats, setStats] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
@@ -376,11 +379,32 @@ function Estadisticas({ meses }) {
     }
   }
 
+  async function cargarHistorico() {
+    setCargando(true);
+    setError(null);
+    try {
+      const c = await fetchCrudoHistoricoEneroJulio();
+      setCrudoHistorico(c);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setCargando(false);
+    }
+  }
+
   useEffect(() => { cargar(); }, []);
+
+  // El bloque histórico (Google Forms, Enero-Julio 2026) es una sola
+  // importación fija -- no vive en base_de_grupos_evaluacion_docente ni
+  // tiene toggle, así que se agrega como un "mes" extra solo acá, sin
+  // tocar la lista de meses que usan la tabla y los links de encuesta.
+  const mesesConHistorico = useMemo(() => [...meses, MES_HISTORICO_ENERO_JULIO], [meses]);
+  const esHistorico = mesElegido === MES_HISTORICO_ENERO_JULIO;
 
   function elegirMes(mes) {
     setMesElegido(mes);
     setCategoriasActivas(new Set());
+    if (mes === MES_HISTORICO_ENERO_JULIO && !crudoHistorico) cargarHistorico();
   }
 
   function toggleCategoria(categoria) {
@@ -392,11 +416,15 @@ function Estadisticas({ meses }) {
     });
   }
 
-  const porCategoria = (crudo || []).filter((d) => d.mes_calificacion === mesElegido);
+  const porCategoria = esHistorico
+    ? (crudoHistorico || [])
+    : (crudo || []).filter((d) => d.mes_calificacion === mesElegido);
   const filasGlobal = porCategoria.flatMap((d) => d.filas);
   const global = { categoria_programa: 'Todas', resumen: resumenDeFilas(filasGlobal) };
   const seriesActivas = porCategoria.filter((d) => categoriasActivas.has(d.categoria_programa));
-  const statsDelMes = (stats || []).filter((s) => s.mes_calificacion === mesElegido);
+  // El histórico no tiene cupos_activos (no viene de base_de_grupos_evaluacion_docente),
+  // así que no hay participación/IC de Wilson que mostrar para ese bloque.
+  const statsDelMes = esHistorico ? [] : (stats || []).filter((s) => s.mes_calificacion === mesElegido);
 
   const claveCorrelacion = [...PREGUNTAS_LIKERT_KEYS, 'nps_recomendaria'];
   const matriz = filasGlobal.length >= N_MINIMO_CORRELACION ? matrizCorrelacion(filasGlobal, claveCorrelacion) : null;
@@ -422,7 +450,7 @@ function Estadisticas({ meses }) {
           <div>
             <p className="text-xs text-slate-400 mb-2">Mes</p>
             <div className="flex flex-wrap gap-2">
-              {meses.map((mes) => {
+              {mesesConHistorico.map((mes) => {
                 const color = colorDeMes(mes);
                 const activo = mesElegido === mes;
                 return (

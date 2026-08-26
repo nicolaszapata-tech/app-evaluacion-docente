@@ -28,6 +28,7 @@ const COLOR_MES_FIJO = {
 const PALETA_MESES_RESERVA = ['#22d3ee', '#fb923c', '#84cc16', '#e879f9', '#38bdf8', '#facc15', '#f472b6'];
 
 export function colorDeMes(mes) {
+  if (mes === MES_HISTORICO_ENERO_JULIO) return '#94a3b8'; // gris neutro -- distingue el bloque histórico de los meses en vivo
   const clave = normalizar(mes);
   if (COLOR_MES_FIJO[clave]) return COLOR_MES_FIJO[clave];
   let hash = 0;
@@ -211,6 +212,43 @@ export async function fetchCrudoEvaluacionDocente() {
 export async function fetchStatsYCrudo() {
   const { stats, crudo } = await llamarPanel_({ accion: 'stats' });
   return { stats: stats || [], crudo: crudo || [] };
+}
+
+/** Bloque histórico (Google Forms, sin cédula/correo/group_id -> no se
+ *  puede deduplicar por estudiante, ver comentario de la tabla en
+ *  Supabase). Se trata como un "mes" más en el selector de Estadísticas,
+ *  pero es una sola importación fija -- no tiene toggle de activación ni
+ *  cupos_activos, por eso no aparece en fetchMesesDisponibles ni en la
+ *  generación de links de encuesta. */
+export const MES_HISTORICO_ENERO_JULIO = 'Histórico Enero-Julio 2026';
+
+const TABLA_HISTORICO_ENERO_JULIO = 'historico_enero_julio_2026_respuestas_evaluacion_docente';
+
+/** Igual forma que fetchCrudoEvaluacionDocente/fetchStatsYCrudo (array de
+ *  {categoria_programa, mes_calificacion, filas}) para poder reusar
+ *  resumenDeFilas/matrizCorrelacion/BoxplotPreguntas sin cambios. Se lee
+ *  directo de Supabase (tabla SELECT-pública, sin PII) en vez de por el
+ *  webhook de n8n -- no hay nada privado que proteger acá. */
+export async function fetchCrudoHistoricoEneroJulio() {
+  const columnas = ['categoria_programa', ...PREGUNTAS_LIKERT_KEYS, 'nps_recomendaria'].join(',');
+  const { data, error } = await supabase.from(TABLA_HISTORICO_ENERO_JULIO).select(columnas);
+  if (error) throw error;
+  const porCategoria = {};
+  (data || []).forEach((r) => {
+    if (!r.categoria_programa) return;
+    if (!porCategoria[r.categoria_programa]) {
+      porCategoria[r.categoria_programa] = {
+        categoria_programa: r.categoria_programa,
+        mes_calificacion: MES_HISTORICO_ENERO_JULIO,
+        filas: [],
+      };
+    }
+    const fila = {};
+    PREGUNTAS_LIKERT_KEYS.forEach((k) => { if (typeof r[k] === 'number') fila[k] = r[k]; });
+    if (typeof r.nps_recomendaria === 'number') fila.nps_recomendaria = r.nps_recomendaria;
+    porCategoria[r.categoria_programa].filas.push(fila);
+  });
+  return Object.values(porCategoria);
 }
 
 /** Promedio general (de las 13 preguntas), promedio de NPS y conteo, a
