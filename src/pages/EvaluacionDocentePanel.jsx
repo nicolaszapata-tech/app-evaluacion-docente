@@ -301,6 +301,27 @@ const PREGUNTAS_LIKERT = [
   { key: 'contenidos_estrategias_evaluacion', label: 'Estrategias de evaluación' },
 ];
 
+/** Las 13 preguntas se agrupan en 3 secciones -- Plataforma, Docente y
+ *  Contenidos -- que son las categorías centrales reales de la evaluación
+ *  (confirmado por el usuario 2026-08-26: mismas 3 secciones y mismo orden
+ *  del formulario real de Satisfacción Plataforma/Docente/Contenidos).
+ *  Se usan para separar visualmente el boxplot y el mapa de calor por
+ *  sección en vez de mostrar las 13 preguntas como una lista plana. */
+const SECCIONES_EVALUACION = [
+  {
+    key: 'plataforma', titulo: 'Satisfacción Plataforma', color: '#38bdf8',
+    keys: ['plataforma_acceso_recursos', 'plataforma_disponibilidad'],
+  },
+  {
+    key: 'docente', titulo: 'Satisfacción Docente', color: '#f97316',
+    keys: ['docente_comunicacion', 'docente_creatividad', 'docente_preparacion', 'docente_estrategias_pedagogicas', 'docente_participacion', 'docente_dominio'],
+  },
+  {
+    key: 'contenidos', titulo: 'Satisfacción Contenidos', color: '#a78bfa',
+    keys: ['contenidos_ruta_aprendizaje', 'contenidos_utilidad', 'contenidos_informacion_clara', 'contenidos_material', 'contenidos_estrategias_evaluacion'],
+  },
+];
+
 /** Etiquetas cortas para el eje del mapa de calor de correlación (los
  *  labels completos de PREGUNTAS_LIKERT son muy largos para caber ahí). */
 const ETIQUETA_CORTA = {
@@ -488,17 +509,37 @@ function Estadisticas({ meses }) {
   );
 }
 
-/** Boxplot agrupado (Plotly type="box", boxmode="group"): un grupo de
- *  cajas por pregunta, una caja por categoría activa -- reemplaza el
- *  histograma de barras (que solo mostraba el promedio) por la
- *  distribución real (mediana, cuartiles, outliers), que es lo que de
- *  verdad distingue "todos calificaron 4" de "mitad puso 5, mitad puso 3". */
+/** Boxplot agrupado (Plotly type="box", boxmode="group"), separado en 3
+ *  bloques por sección (Plataforma / Docente / Contenidos, ver
+ *  SECCIONES_EVALUACION) -- dentro de cada bloque, un grupo de cajas por
+ *  pregunta y una caja por categoría activa. Reemplaza el histograma de
+ *  barras (que solo mostraba el promedio) por la distribución real
+ *  (mediana, cuartiles, outliers), que es lo que de verdad distingue
+ *  "todos calificaron 4" de "mitad puso 5, mitad puso 3". */
 function BoxplotPreguntas({ series }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] text-slate-500">
+        Cada caja muestra la distribución (mediana, cuartiles y valores atípicos) de esa pregunta para la categoría de su color, no solo el promedio.
+      </p>
+      {SECCIONES_EVALUACION.map((seccion) => (
+        <BoxplotSeccion key={seccion.key} seccion={seccion} series={series} />
+      ))}
+    </div>
+  );
+}
+
+function BoxplotSeccion({ seccion, series }) {
+  const preguntas = useMemo(
+    () => PREGUNTAS_LIKERT.filter((p) => seccion.keys.includes(p.key)),
+    [seccion],
+  );
+
   const data = useMemo(() => series.map((s) => {
     const x = [];
     const y = [];
     s.filas.forEach((fila) => {
-      PREGUNTAS_LIKERT.forEach((p) => {
+      preguntas.forEach((p) => {
         const v = fila[p.key];
         if (typeof v === 'number') { x.push(p.label); y.push(v); }
       });
@@ -510,25 +551,26 @@ function BoxplotPreguntas({ series }) {
       marker: { color: COLOR_CATEGORIA[s.categoria_programa] || '#5b7fff' },
       boxpoints: 'outliers',
     };
-  }), [series]);
+  }), [series, preguntas]);
 
   const layout = useMemo(() => ({
+    height: 320,
     boxmode: 'group',
-    height: 440,
     yaxis: { title: 'Puntaje', range: [0.5, 5.5], dtick: 1 },
     xaxis: {
-      tickangle: -25,
+      tickangle: -20,
       categoryorder: 'array',
-      categoryarray: PREGUNTAS_LIKERT.map((p) => p.label),
+      categoryarray: preguntas.map((p) => p.label),
     },
-  }), []);
+  }), [preguntas]);
 
   return (
-    <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
-      <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 440 }} />
-      <p className="text-[11px] text-slate-500 mt-1">
-        Cada caja muestra la distribución (mediana, cuartiles y valores atípicos) de esa pregunta para la categoría de su color, no solo el promedio.
+    <div className="bg-ink-800 border rounded-md p-3" style={{ borderColor: seccion.color + '55', borderLeftWidth: 4, borderLeftColor: seccion.color }}>
+      <p className="text-xs font-semibold mb-1 flex items-center gap-1.5" style={{ color: seccion.color }}>
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: seccion.color }} />
+        {seccion.titulo}
       </p>
+      <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 320 }} />
     </div>
   );
 }
@@ -538,8 +580,24 @@ function BoxplotPreguntas({ series }) {
  *  posible). Ayuda a ver, por ejemplo, si "dominio del docente" se mueve
  *  junto con el NPS o son cosas independientes. Se oculta con muestra
  *  chica porque un r calculado con pocos pares es prácticamente aleatorio. */
+/** Fronteras (posiciones de eje categórico, 0-indexadas) entre secciones
+ *  dentro de `claves` -- asume que `claves` viene en el orden
+ *  Plataforma(2) + Docente(6) + Contenidos(5) + NPS(1), que es el orden en
+ *  que se arma en Estadisticas() a partir de PREGUNTAS_LIKERT_KEYS. Se usan
+ *  para dibujar líneas divisorias en el mapa de calor entre cada sección. */
+function fronterasDeSecciones(claves) {
+  const fronteras = [];
+  let acumulado = 0;
+  SECCIONES_EVALUACION.forEach((s) => {
+    acumulado += s.keys.filter((k) => claves.includes(k)).length;
+    fronteras.push(acumulado - 0.5);
+  });
+  return fronteras.slice(0, -1); // no hace falta línea al final del todo
+}
+
 function CorrelacionHeatmap({ matriz, claves, totalRespuestas }) {
   const etiquetas = claves.map((k) => ETIQUETA_CORTA[k] || k);
+  const n = claves.length;
 
   const data = useMemo(() => (matriz ? [{
     type: 'heatmap',
@@ -553,16 +611,38 @@ function CorrelacionHeatmap({ matriz, claves, totalRespuestas }) {
     hovertemplate: '%{y} × %{x}: r = %{z}<extra></extra>',
   }] : []), [matriz, etiquetas]);
 
-  const layout = useMemo(() => ({
-    height: 480,
-    margin: { t: 24, r: 16, b: 90, l: 140 },
-    xaxis: { tickangle: -45 },
-    yaxis: { autorange: 'reversed' },
-  }), []);
+  const layout = useMemo(() => {
+    const fronteras = fronterasDeSecciones(claves);
+    const shapes = fronteras.flatMap((f) => ([
+      { type: 'line', xref: 'x', yref: 'paper', x0: f, x1: f, y0: 0, y1: 1, line: { color: 'rgba(226,232,240,0.55)', width: 2 } },
+      { type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: f, y1: f, line: { color: 'rgba(226,232,240,0.55)', width: 2 } },
+    ]));
+    return {
+      height: 480,
+      margin: { t: 24, r: 16, b: 90, l: 140 },
+      xaxis: { tickangle: -45, range: [-0.5, n - 0.5] },
+      yaxis: { autorange: 'reversed', range: [n - 0.5, -0.5] },
+      shapes,
+    };
+  }, [claves, n]);
 
   return (
     <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
-      <p className="text-xs text-slate-300 mb-2">Correlación entre preguntas (todas las categorías del mes)</p>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <p className="text-xs text-slate-300">Correlación entre preguntas (todas las categorías del mes)</p>
+        <div className="flex items-center gap-3 text-[11px] text-slate-400">
+          {SECCIONES_EVALUACION.map((s) => (
+            <span key={s.key} className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
+              {s.titulo.replace('Satisfacción ', '')}
+            </span>
+          ))}
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full shrink-0 bg-slate-400" />
+            NPS
+          </span>
+        </div>
+      </div>
       {matriz ? (
         <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 480 }} />
       ) : (
@@ -571,7 +651,7 @@ function CorrelacionHeatmap({ matriz, claves, totalRespuestas }) {
         </p>
       )}
       <p className="text-[11px] text-slate-500 mt-2">
-        1 = se mueven siempre juntas, -1 = siempre al contrario, 0 = sin relación. Correlación no implica causalidad.
+        Las líneas separan las secciones Plataforma / Docente / Contenidos / NPS. 1 = se mueven siempre juntas, -1 = siempre al contrario, 0 = sin relación. Correlación no implica causalidad.
       </p>
     </div>
   );
