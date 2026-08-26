@@ -1,14 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import Combobox from '../components/Combobox.jsx';
+import PlotlyChart from '../components/PlotlyChart.jsx';
 import { normalizar } from '../lib/normalizar.js';
 import {
   CATEGORIAS_EVALUACION_DOCENTE,
   colorDeMes,
-  fetchDetalleEvaluacionDocente,
   fetchGruposEvaluacionDocente,
   formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
   fetchMesesDisponibles,
+  fetchStatsYCrudo,
+  icWilson,
+  matrizCorrelacion,
+  PREGUNTAS_LIKERT_KEYS,
+  resumenDeFilas,
   slug,
   togglearMesActivo,
 } from '../lib/evaluacionDocente.js';
@@ -296,6 +301,25 @@ const PREGUNTAS_LIKERT = [
   { key: 'contenidos_estrategias_evaluacion', label: 'Estrategias de evaluación' },
 ];
 
+/** Etiquetas cortas para el eje del mapa de calor de correlación (los
+ *  labels completos de PREGUNTAS_LIKERT son muy largos para caber ahí). */
+const ETIQUETA_CORTA = {
+  plataforma_acceso_recursos: 'Acceso plataforma',
+  plataforma_disponibilidad: 'Disp. plataforma',
+  docente_comunicacion: 'Comunicación',
+  docente_creatividad: 'Creatividad',
+  docente_preparacion: 'Preparación',
+  docente_estrategias_pedagogicas: 'Estrategias pedag.',
+  docente_participacion: 'Participación clase',
+  docente_dominio: 'Dominio',
+  contenidos_ruta_aprendizaje: 'Ruta aprendizaje',
+  contenidos_utilidad: 'Utilidad',
+  contenidos_informacion_clara: 'Información clara',
+  contenidos_material: 'Material',
+  contenidos_estrategias_evaluacion: 'Estrat. evaluación',
+  nps_recomendaria: 'NPS',
+};
+
 const COLOR_CATEGORIA = {
   Administración: '#5b7fff',
   Contabilidad: '#f59e0b',
@@ -303,8 +327,15 @@ const COLOR_CATEGORIA = {
   Marketing: '#f43f5e',
 };
 
+/** Mínimo de respuestas combinadas para que una matriz de correlación
+ *  diga algo real -- con menos de esto, cualquier r es ruido de muestra
+ *  chica (más estricto que N_MINIMO_CONFIABLE porque acá se cruzan pares
+ *  de variables, no una sola). */
+const N_MINIMO_CORRELACION = 10;
+
 function Estadisticas({ meses }) {
-  const [detalle, setDetalle] = useState(null);
+  const [crudo, setCrudo] = useState(null);
+  const [stats, setStats] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
   const [mesElegido, setMesElegido] = useState(null);
@@ -314,8 +345,9 @@ function Estadisticas({ meses }) {
     setCargando(true);
     setError(null);
     try {
-      const { detalle: d } = await fetchDetalleEvaluacionDocente();
-      setDetalle(d);
+      const { stats: s, crudo: c } = await fetchStatsYCrudo();
+      setStats(s);
+      setCrudo(c);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -339,10 +371,14 @@ function Estadisticas({ meses }) {
     });
   }
 
-  const detalleDelMes = (detalle || []).filter((d) => d.mes_calificacion === mesElegido);
-  const global = detalleDelMes.find((d) => d.categoria_programa === 'Todas');
-  const porCategoria = detalleDelMes.filter((d) => d.categoria_programa !== 'Todas');
+  const porCategoria = (crudo || []).filter((d) => d.mes_calificacion === mesElegido);
+  const filasGlobal = porCategoria.flatMap((d) => d.filas);
+  const global = { categoria_programa: 'Todas', resumen: resumenDeFilas(filasGlobal) };
   const seriesActivas = porCategoria.filter((d) => categoriasActivas.has(d.categoria_programa));
+  const statsDelMes = (stats || []).filter((s) => s.mes_calificacion === mesElegido);
+
+  const claveCorrelacion = [...PREGUNTAS_LIKERT_KEYS, 'nps_recomendaria'];
+  const matriz = filasGlobal.length >= N_MINIMO_CORRELACION ? matrizCorrelacion(filasGlobal, claveCorrelacion) : null;
 
   return (
     <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-4">
@@ -393,9 +429,10 @@ function Estadisticas({ meses }) {
           {mesElegido && (
             <>
               <div>
-                <p className="text-xs text-slate-400 mb-2">Categorías a comparar (clic para superponer en el histograma)</p>
+                <p className="text-xs text-slate-400 mb-2">Categorías a comparar (clic para superponer en el boxplot)</p>
                 <div className="flex flex-wrap gap-2">
                   {porCategoria.map((d) => {
+                    const respuestas = d.filas.length;
                     const activa = categoriasActivas.has(d.categoria_programa);
                     const color = COLOR_CATEGORIA[d.categoria_programa] || '#5b7fff';
                     return (
@@ -412,8 +449,8 @@ function Estadisticas({ meses }) {
                       >
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
                         {d.categoria_programa}
-                        <span className="text-xs opacity-70">({d.respuestas})</span>
-                        {d.respuestas > 0 && d.respuestas < N_MINIMO_CONFIABLE && (
+                        <span className="text-xs opacity-70">({respuestas})</span>
+                        {respuestas > 0 && respuestas < N_MINIMO_CONFIABLE && (
                           <span title={`Menos de ${N_MINIMO_CONFIABLE} respuestas`}>⚠</span>
                         )}
                       </button>
@@ -423,22 +460,26 @@ function Estadisticas({ meses }) {
               </div>
 
               {seriesActivas.length === 0 ? (
-                <p className="text-xs text-slate-400">Elige al menos una categoría para ver el histograma.</p>
+                <p className="text-xs text-slate-400">Elige al menos una categoría para ver el boxplot.</p>
               ) : (
-                <Histograma series={seriesActivas} />
+                <BoxplotPreguntas series={seriesActivas} />
               )}
 
               <div className="grid sm:grid-cols-2 gap-3">
-                {global && <TarjetaResumen titulo="Global (todas las categorías)" color="#94a3b8" resumen={global} />}
+                <TarjetaResumen titulo="Global (todas las categorías)" color="#94a3b8" resumen={global.resumen} />
                 {seriesActivas.map((d) => (
                   <TarjetaResumen
                     key={d.categoria_programa}
                     titulo={d.categoria_programa}
                     color={COLOR_CATEGORIA[d.categoria_programa] || '#5b7fff'}
-                    resumen={d}
+                    resumen={resumenDeFilas(d.filas)}
                   />
                 ))}
               </div>
+
+              <Participacion stats={statsDelMes} />
+
+              <CorrelacionHeatmap matriz={matriz} claves={claveCorrelacion} totalRespuestas={filasGlobal.length} />
             </>
           )}
         </>
@@ -447,35 +488,136 @@ function Estadisticas({ meses }) {
   );
 }
 
-function Histograma({ series }) {
+/** Boxplot agrupado (Plotly type="box", boxmode="group"): un grupo de
+ *  cajas por pregunta, una caja por categoría activa -- reemplaza el
+ *  histograma de barras (que solo mostraba el promedio) por la
+ *  distribución real (mediana, cuartiles, outliers), que es lo que de
+ *  verdad distingue "todos calificaron 4" de "mitad puso 5, mitad puso 3". */
+function BoxplotPreguntas({ series }) {
+  const data = useMemo(() => series.map((s) => {
+    const x = [];
+    const y = [];
+    s.filas.forEach((fila) => {
+      PREGUNTAS_LIKERT.forEach((p) => {
+        const v = fila[p.key];
+        if (typeof v === 'number') { x.push(p.label); y.push(v); }
+      });
+    });
+    return {
+      type: 'box',
+      name: s.categoria_programa,
+      x, y,
+      marker: { color: COLOR_CATEGORIA[s.categoria_programa] || '#5b7fff' },
+      boxpoints: 'outliers',
+    };
+  }), [series]);
+
+  const layout = useMemo(() => ({
+    boxmode: 'group',
+    height: 440,
+    yaxis: { title: 'Puntaje', range: [0.5, 5.5], dtick: 1 },
+    xaxis: {
+      tickangle: -25,
+      categoryorder: 'array',
+      categoryarray: PREGUNTAS_LIKERT.map((p) => p.label),
+    },
+  }), []);
+
   return (
-    <div className="bg-ink-800 border border-ink-600 rounded-md p-4 space-y-3 overflow-x-auto">
-      <div className="min-w-[560px]">
-        {PREGUNTAS_LIKERT.map((p) => (
-          <div key={p.key} className="mb-3">
-            <p className="text-xs text-slate-300 mb-1">{p.label}</p>
-            <div className="space-y-1">
-              {series.map((s) => {
-                const valor = s.preguntas[p.key];
-                const color = COLOR_CATEGORIA[s.categoria_programa] || '#5b7fff';
-                return (
-                  <div key={s.categoria_programa} className="flex items-center gap-2">
-                    <div className="flex-1 h-3.5 rounded bg-ink-700 overflow-hidden">
-                      <div
-                        className="h-full rounded"
-                        style={{ width: `${((valor || 0) / 5) * 100}%`, backgroundColor: color }}
-                        title={`${s.categoria_programa}: ${valor ?? '—'} / 5`}
-                      />
-                    </div>
-                    <span className="w-8 text-right text-[11px] text-slate-400 shrink-0">{valor ?? '—'}</span>
-                  </div>
-                );
-              })}
+    <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+      <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 440 }} />
+      <p className="text-[11px] text-slate-500 mt-1">
+        Cada caja muestra la distribución (mediana, cuartiles y valores atípicos) de esa pregunta para la categoría de su color, no solo el promedio.
+      </p>
+    </div>
+  );
+}
+
+/** Mapa de calor de correlación de Pearson entre las 13 preguntas Likert +
+ *  NPS, sobre TODAS las categorías del mes (para tener la mayor muestra
+ *  posible). Ayuda a ver, por ejemplo, si "dominio del docente" se mueve
+ *  junto con el NPS o son cosas independientes. Se oculta con muestra
+ *  chica porque un r calculado con pocos pares es prácticamente aleatorio. */
+function CorrelacionHeatmap({ matriz, claves, totalRespuestas }) {
+  const etiquetas = claves.map((k) => ETIQUETA_CORTA[k] || k);
+
+  const data = useMemo(() => (matriz ? [{
+    type: 'heatmap',
+    z: matriz,
+    x: etiquetas,
+    y: etiquetas,
+    zmin: -1,
+    zmax: 1,
+    colorscale: 'RdBu',
+    reversescale: true,
+    hovertemplate: '%{y} × %{x}: r = %{z}<extra></extra>',
+  }] : []), [matriz, etiquetas]);
+
+  const layout = useMemo(() => ({
+    height: 480,
+    margin: { t: 24, r: 16, b: 90, l: 140 },
+    xaxis: { tickangle: -45 },
+    yaxis: { autorange: 'reversed' },
+  }), []);
+
+  return (
+    <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+      <p className="text-xs text-slate-300 mb-2">Correlación entre preguntas (todas las categorías del mes)</p>
+      {matriz ? (
+        <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 480 }} />
+      ) : (
+        <p className="text-xs text-slate-400">
+          Se necesitan al menos {N_MINIMO_CORRELACION} respuestas en el mes para calcular correlaciones de forma confiable (hoy hay {totalRespuestas}).
+        </p>
+      )}
+      <p className="text-[11px] text-slate-500 mt-2">
+        1 = se mueven siempre juntas, -1 = siempre al contrario, 0 = sin relación. Correlación no implica causalidad.
+      </p>
+    </div>
+  );
+}
+
+/** Tasa de participación (respuestas vs. cupos_activos) por categoría, con
+ *  intervalo de confianza 95% de Wilson en vez del clásico normal -- con
+ *  cupos chicos (10-30 estudiantes por grupo) el IC normal puede salir
+ *  fuera de [0,100%], el de Wilson no. */
+function Participacion({ stats }) {
+  if (!stats || stats.length === 0) return null;
+  return (
+    <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+      <p className="text-xs text-slate-300 mb-2">Participación (respuestas vs. cupos activos)</p>
+      <div className="space-y-2">
+        {stats.map((s) => {
+          const ic = icWilson(s.respuestas_count, s.cupos_activos);
+          const color = COLOR_CATEGORIA[s.categoria_programa] || '#5b7fff';
+          const pct = s.participacion_pct ?? 0;
+          return (
+            <div key={s.categoria_programa} className="flex items-center gap-3">
+              <span className="w-28 shrink-0 text-xs text-slate-300 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                {s.categoria_programa}
+              </span>
+              <div className="flex-1 h-3.5 rounded bg-ink-700 overflow-hidden relative">
+                <div className="h-full rounded" style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: color }} />
+                {ic && (
+                  <div
+                    className="absolute top-0 h-full border-l border-r border-slate-100/50"
+                    style={{ left: `${Math.min(ic.bajo * 100, 100)}%`, width: `${Math.max((ic.alto - ic.bajo) * 100, 0)}%` }}
+                    title={`IC 95%: ${Math.round(ic.bajo * 1000) / 10}% – ${Math.round(ic.alto * 1000) / 10}%`}
+                  />
+                )}
+              </div>
+              <span className="w-40 shrink-0 text-right text-[11px] text-slate-400">
+                {s.respuestas_count}/{s.cupos_activos || '—'} ({pct}%
+                {ic ? ` · IC ${Math.round(ic.bajo * 1000) / 10}–${Math.round(ic.alto * 1000) / 10}` : ''})
+              </span>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      <p className="text-[11px] text-slate-500">Escala 1 a 5. Cada barra es el promedio de esa pregunta para la categoría de su color.</p>
+      <p className="text-[11px] text-slate-500 mt-2">
+        La franja clara sobre la barra es el intervalo de confianza 95% (Wilson) -- con pocos cupos, la participación real puede variar bastante dentro de ese rango.
+      </p>
     </div>
   );
 }

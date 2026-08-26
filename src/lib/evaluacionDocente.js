@@ -178,19 +178,114 @@ export async function togglearMesActivo(mes, activo) {
   return llamarPanel_({ accion: 'toggle_mes', mes, activo });
 }
 
-/** { stats: [participación por categoria+mes vs cupos_activos], detalle:
- *  [promedio de cada pregunta Likert por categoria+mes, más una entrada
- *  "Todas" por mes con el promedio global combinado] }. */
+/** Las 13 preguntas Likert (1-5) de la evaluación -- clave compartida entre
+ *  el cálculo de estadísticas (resumenDeFilas, matrizCorrelacion) y las
+ *  etiquetas de UI (EvaluacionDocentePanel.jsx). */
+export const PREGUNTAS_LIKERT_KEYS = [
+  'plataforma_acceso_recursos', 'plataforma_disponibilidad',
+  'docente_comunicacion', 'docente_creatividad', 'docente_preparacion',
+  'docente_estrategias_pedagogicas', 'docente_participacion', 'docente_dominio',
+  'contenidos_ruta_aprendizaje', 'contenidos_utilidad', 'contenidos_informacion_clara',
+  'contenidos_material', 'contenidos_estrategias_evaluacion',
+];
+
+/** { stats: [participación por categoria+mes vs cupos_activos], crudo:
+ *  [{categoria_programa, mes_calificacion, filas: [{...13 likert, nps_recomendaria}]}] }
+ *  -- SIN promediar; el frontend calcula promedios/boxplot/correlación (ver
+ *  resumenDeFilas, matrizCorrelacion) porque Plotly ya sabe hacer boxplot a
+ *  partir de valores crudos, y así no hay que duplicar lógica de
+ *  estadística en el Code node de n8n cada vez que se agrega un análisis. */
 export async function fetchStatsEvaluacionDocente() {
-  const { stats } = await fetchStatsYDetalle();
+  const { stats } = await fetchStatsYCrudo();
   return stats;
 }
 
-export async function fetchDetalleEvaluacionDocente() {
-  return fetchStatsYDetalle();
+export async function fetchCrudoEvaluacionDocente() {
+  const { crudo } = await fetchStatsYCrudo();
+  return crudo;
 }
 
-async function fetchStatsYDetalle() {
-  const { stats, detalle } = await llamarPanel_({ accion: 'stats' });
-  return { stats: stats || [], detalle: detalle || [] };
+/** Trae stats + crudo en una sola llamada al webhook (evita pedirlo dos
+ *  veces cuando la vista de Estadísticas necesita ambos, como
+ *  EvaluacionDocentePanel.jsx). */
+export async function fetchStatsYCrudo() {
+  const { stats, crudo } = await llamarPanel_({ accion: 'stats' });
+  return { stats: stats || [], crudo: crudo || [] };
+}
+
+/** Promedio general (de las 13 preguntas), promedio de NPS y conteo, a
+ *  partir de un array de filas crudas (ver fetchCrudoEvaluacionDocente).
+ *  Ignora valores faltantes en vez de tratarlos como 0. */
+export function resumenDeFilas(filas) {
+  const n = filas.length;
+  if (!n) return { respuestas: 0, promedio_general: null, promedio_nps: null, preguntas: {} };
+
+  const preguntas = {};
+  let sumaTotal = 0;
+  let cuentaTotal = 0;
+  PREGUNTAS_LIKERT_KEYS.forEach((k) => {
+    const valores = filas.map((f) => f[k]).filter((v) => typeof v === 'number');
+    if (valores.length) {
+      const suma = valores.reduce((a, b) => a + b, 0);
+      preguntas[k] = Math.round((suma / valores.length) * 100) / 100;
+      sumaTotal += suma;
+      cuentaTotal += valores.length;
+    } else {
+      preguntas[k] = null;
+    }
+  });
+
+  const npsValores = filas.map((f) => f.nps_recomendaria).filter((v) => typeof v === 'number');
+  const promedio_nps = npsValores.length
+    ? Math.round((npsValores.reduce((a, b) => a + b, 0) / npsValores.length) * 10) / 10
+    : null;
+  const promedio_general = cuentaTotal ? Math.round((sumaTotal / cuentaTotal) * 100) / 100 : null;
+
+  return { respuestas: n, promedio_general, promedio_nps, preguntas };
+}
+
+/** Correlación de Pearson entre dos arrays numéricos de igual longitud
+ *  (ya emparejados, sin nulos). null si n < 3 (no tiene sentido con menos). */
+export function correlacionPearson(xs, ys) {
+  const n = xs.length;
+  if (n < 3) return null;
+  const mx = xs.reduce((a, b) => a + b, 0) / n;
+  const my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    num += dx * dy; dx2 += dx * dx; dy2 += dy * dy;
+  }
+  const den = Math.sqrt(dx2 * dy2);
+  return den === 0 ? null : Math.round((num / den) * 100) / 100;
+}
+
+/** Matriz de correlación de Pearson NxN sobre `claves` (nombres de campos
+ *  presentes en cada fila de `filas`) -- cada celda usa solo los pares
+ *  donde AMBAS variables tienen valor (por si algún registro viejo tuviera
+ *  algo vacío). */
+export function matrizCorrelacion(filas, claves) {
+  return claves.map((claveA) =>
+    claves.map((claveB) => {
+      if (claveA === claveB) return 1;
+      const pares = filas
+        .map((f) => [f[claveA], f[claveB]])
+        .filter(([a, b]) => typeof a === 'number' && typeof b === 'number');
+      return correlacionPearson(pares.map((p) => p[0]), pares.map((p) => p[1]));
+    })
+  );
+}
+
+/** Intervalo de confianza 95% de Wilson para una proporción (ej. tasa de
+ *  participación exitos/n) -- más confiable que el IC normal con n chico o
+ *  p cerca de 0/1, que es exactamente el caso de este dataset. Devuelve
+ *  fracciones (0-1), no porcentajes. */
+export function icWilson(exitos, n) {
+  if (!n) return null;
+  const z = 1.96;
+  const p = exitos / n;
+  const denom = 1 + (z * z) / n;
+  const centro = (p + (z * z) / (2 * n)) / denom;
+  const margen = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+  return { bajo: Math.max(0, centro - margen), alto: Math.min(1, centro + margen) };
 }
