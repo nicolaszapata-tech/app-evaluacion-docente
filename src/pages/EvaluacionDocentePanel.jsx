@@ -413,6 +413,9 @@ function Estadisticas({ meses }) {
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
                         {d.categoria_programa}
                         <span className="text-xs opacity-70">({d.respuestas})</span>
+                        {d.respuestas > 0 && d.respuestas < N_MINIMO_CONFIABLE && (
+                          <span title={`Menos de ${N_MINIMO_CONFIABLE} respuestas`}>⚠</span>
+                        )}
                       </button>
                     );
                   })}
@@ -477,20 +480,37 @@ function Histograma({ series }) {
   );
 }
 
+/** Piso mínimo de respuestas para mostrar un promedio como si fuera
+ *  confiable -- por debajo de esto (ej. Marketing con 1 grupo/1 docente) el
+ *  número es ruido, no una medición, y publicarlo "crudo" es engañoso
+ *  (riesgo detectado por Opus 2026-08-26: con 4-12 respuestas por celda,
+ *  cualquier promedio puntual es poco confiable). Se puede subir cuando
+ *  crezca el volumen real de respuestas. */
+const N_MINIMO_CONFIABLE = 5;
+
 function TarjetaResumen({ titulo, color, resumen }) {
+  const muestraChica = resumen.respuestas > 0 && resumen.respuestas < N_MINIMO_CONFIABLE;
   return (
     <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
       <div className="flex items-center gap-1.5 text-sm text-slate-200 mb-2">
         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
         {titulo}
+        {muestraChica && (
+          <span
+            className="text-[10px] font-medium text-amber-300 bg-amber-950/40 border border-amber-800 rounded px-1.5 py-0.5"
+            title={`Menos de ${N_MINIMO_CONFIABLE} respuestas -- el promedio puede no ser representativo.`}
+          >
+            ⚠ muestra chica
+          </span>
+        )}
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div>
-          <div className="text-lg font-semibold text-slate-100">{resumen.promedio_general ?? '—'}</div>
+          <div className="text-lg font-semibold text-slate-100">{muestraChica ? '—' : (resumen.promedio_general ?? '—')}</div>
           <div className="text-[11px] text-slate-400">Promedio /5</div>
         </div>
         <div>
-          <div className="text-lg font-semibold text-slate-100">{resumen.promedio_nps ?? '—'}</div>
+          <div className="text-lg font-semibold text-slate-100">{muestraChica ? '—' : (resumen.promedio_nps ?? '—')}</div>
           <div className="text-[11px] text-slate-400">NPS /10</div>
         </div>
         <div>
@@ -498,6 +518,11 @@ function TarjetaResumen({ titulo, color, resumen }) {
           <div className="text-[11px] text-slate-400">Respuestas</div>
         </div>
       </div>
+      {muestraChica && (
+        <p className="text-[10px] text-amber-400/80 mt-2">
+          Con menos de {N_MINIMO_CONFIABLE} respuestas no mostramos el promedio -- muy pocas evaluaciones para que sea representativo.
+        </p>
+      )}
     </div>
   );
 }

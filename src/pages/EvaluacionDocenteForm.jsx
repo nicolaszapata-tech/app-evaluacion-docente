@@ -117,6 +117,7 @@ export default function EvaluacionDocenteForm() {
           correo: correo.trim() || null,
           categoria_programa: categoria,
           mes_calificacion: mes,
+          group_id: groupId,
         },
         respuestas: {
           categoria_programa: categoria,
@@ -131,7 +132,13 @@ export default function EvaluacionDocenteForm() {
       });
       setEstado(ESTADOS.ENVIADO);
     } catch (e2) {
-      setError(e2.message || String(e2));
+      // 23505 = violación del índice único (cedula, group_id) -- ya se
+      // envió una evaluación para esta cédula y esta materia/grupo.
+      if (e2?.code === '23505') {
+        setError('Ya registramos una evaluación tuya para esta materia. Si crees que es un error, contacta al área de calidad académica.');
+      } else {
+        setError(e2.message || String(e2));
+      }
     } finally {
       setEnviando(false);
     }

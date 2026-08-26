@@ -1,14 +1,11 @@
 import { supabase } from './supabase.js';
 import { normalizar } from './normalizar.js';
+import { leerSesion } from './auth.js';
 
 /** Las 4 categorías fijas que ya trae base_de_grupos_evaluacion_docente
  *  (categoria_programa) -- los links se arman por categoría, NO por programa
  *  específico (decisión explícita del usuario, 2026-08-24). */
 export const CATEGORIAS_EVALUACION_DOCENTE = ['Administración', 'Contabilidad', 'Marketing', 'Ingeniería'];
-
-const WEBHOOK_BASE = import.meta.env.VITE_N8N_WEBHOOK_BASE;
-const SYNC_SECRET = import.meta.env.VITE_SYNC_SECRET;
-const WEBHOOK_PATH = 'evaluacion-docente-panel';
 
 /** Slug de URL sin tildes/espacios -- para categoría y mes en la ruta
  *  /evaluar/:categoriaSlug/:mesSlug. */
@@ -152,29 +149,38 @@ export async function enviarEvaluacionDocente({ identidad, respuestas }) {
   if (errRespuestas) throw errRespuestas;
 }
 
-function webhookHeaders() {
-  if (!WEBHOOK_BASE || !SYNC_SECRET) {
-    throw new Error('Falta configurar VITE_N8N_WEBHOOK_BASE / VITE_SYNC_SECRET.');
+/** Todas las llamadas privilegiadas del panel (toggle de mes, stats) pasan
+ *  por /api/panel (Vercel Function, src ../../api/panel.js) en vez de pegarle
+ *  directo al webhook de n8n con un secreto en el bundle del cliente -- el
+ *  secreto real ahora vive server-side (variable de entorno de Vercel, sin
+ *  prefijo VITE_, nunca se empaqueta al navegador). 2026-08-26, corrigiendo
+ *  el riesgo #6 detectado por Opus ("VITE_SYNC_SECRET está en el bundle del
+ *  cliente, cualquiera lo extrae de las devtools"). Se manda también el
+ *  correo de la sesión (login "suave" de Google, ver auth.js) para que el
+ *  server pueda rechazar llamadas sin sesión válida -- no es autenticación
+ *  criptográfica real, pero ya no depende de un secreto público estático.
+ */
+async function llamarPanel_(body) {
+  const sesion = leerSesion();
+  const respuesta = await fetch('/api/panel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...body, correoSesion: sesion?.email || null }),
+  });
+  if (!respuesta.ok) {
+    const texto = await respuesta.text().catch(() => '');
+    throw new Error(`El servidor respondió HTTP ${respuesta.status}. ${texto}`.trim());
   }
-  return { 'Content-Type': 'application/json', 'X-Sync-Secret': SYNC_SECRET };
+  return respuesta.json();
 }
 
 export async function togglearMesActivo(mes, activo) {
-  const respuesta = await fetch(`${WEBHOOK_BASE}/${WEBHOOK_PATH}`, {
-    method: 'POST',
-    headers: webhookHeaders(),
-    body: JSON.stringify({ accion: 'toggle_mes', mes, activo }),
-  });
-  if (!respuesta.ok) throw new Error(`El workflow respondió HTTP ${respuesta.status}.`);
-  return respuesta.json();
+  return llamarPanel_({ accion: 'toggle_mes', mes, activo });
 }
 
 /** { stats: [participación por categoria+mes vs cupos_activos], detalle:
  *  [promedio de cada pregunta Likert por categoria+mes, más una entrada
- *  "Todas" por mes con el promedio global combinado] }. El webhook
- *  ("EVALUACION DOCENTE — Panel staff") calcula todo con la service key
- *  sobre consolidada_respuestas_evaluacion_docente -- anon no puede leer
- *  esa tabla directo (sin policy de SELECT, ver evaluacionDocente.js). */
+ *  "Todas" por mes con el promedio global combinado] }. */
 export async function fetchStatsEvaluacionDocente() {
   const { stats } = await fetchStatsYDetalle();
   return stats;
@@ -185,12 +191,6 @@ export async function fetchDetalleEvaluacionDocente() {
 }
 
 async function fetchStatsYDetalle() {
-  const respuesta = await fetch(`${WEBHOOK_BASE}/${WEBHOOK_PATH}`, {
-    method: 'POST',
-    headers: webhookHeaders(),
-    body: JSON.stringify({ accion: 'stats' }),
-  });
-  if (!respuesta.ok) throw new Error(`El workflow respondió HTTP ${respuesta.status}.`);
-  const { stats, detalle } = await respuesta.json();
+  const { stats, detalle } = await llamarPanel_({ accion: 'stats' });
   return { stats: stats || [], detalle: detalle || [] };
 }
