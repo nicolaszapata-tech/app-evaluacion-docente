@@ -3,6 +3,7 @@ import Combobox from '../components/Combobox.jsx';
 import { normalizar } from '../lib/normalizar.js';
 import {
   CATEGORIAS_EVALUACION_DOCENTE,
+  colorDeMes,
   fetchDetalleEvaluacionDocente,
   fetchGruposEvaluacionDocente,
   formatearFechaDDMMYYYY,
@@ -165,6 +166,7 @@ function TablaGrupos({ meses, activos }) {
               <ChipFiltro
                 key={mes}
                 activo={mesesElegidos.has(mes)}
+                color={colorDeMes(mes)}
                 onClick={() => toggleEnSet(mesesElegidos, setMesesElegidos, mes)}
               >
                 {mes}{activos[mes] && ' ●'}
@@ -224,7 +226,12 @@ function TablaGrupos({ meses, activos }) {
               {filasFiltradas.map((f) => (
                 <tr key={f.group_id} className="border-t border-ink-700 hover:bg-ink-800/60">
                   <Td>{f.id_grupo_mapeo}</Td>
-                  <Td>{f.mes_calificacion}</Td>
+                  <Td>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(f.mes_calificacion) }} />
+                      {f.mes_calificacion}
+                    </span>
+                  </Td>
                   <Td>{f.group_id}</Td>
                   <Td>{f.section_id}</Td>
                   <Td>{f.categoria_programa}</Td>
@@ -244,18 +251,23 @@ function TablaGrupos({ meses, activos }) {
   );
 }
 
-function ChipFiltro({ activo, onClick, children }) {
+function ChipFiltro({ activo, onClick, color, children }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={
-        'text-xs rounded-md px-2.5 py-1 border transition-colors ' +
-        (activo
-          ? 'bg-accent-500/15 border-accent-500 text-accent-300'
-          : 'bg-ink-800 border-ink-600 text-slate-400 hover:border-ink-500')
+      className="text-xs rounded-md px-2.5 py-1 border transition-colors flex items-center gap-1.5"
+      style={
+        color
+          ? activo
+            ? { backgroundColor: color + '26', borderColor: color, color }
+            : { borderColor: '#2f3a4d', color: '#94a3b8' }
+          : activo
+            ? { backgroundColor: 'rgba(91,127,255,.15)', borderColor: '#5b7fff', color: '#7d9bff' }
+            : { borderColor: '#2f3a4d', color: '#94a3b8' }
       }
     >
+      {color && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />}
       {children}
     </button>
   );
@@ -353,21 +365,26 @@ function Estadisticas({ meses }) {
           <div>
             <p className="text-xs text-slate-400 mb-2">Mes</p>
             <div className="flex flex-wrap gap-2">
-              {meses.map((mes) => (
-                <button
-                  key={mes}
-                  type="button"
-                  onClick={() => elegirMes(mes)}
-                  className={
-                    'text-sm rounded-md px-3 py-1.5 border transition-colors ' +
-                    (mesElegido === mes
-                      ? 'bg-accent-500/15 border-accent-500 text-accent-300'
-                      : 'bg-ink-800 border-ink-600 text-slate-300 hover:border-ink-500')
-                  }
-                >
-                  {mes}
-                </button>
-              ))}
+              {meses.map((mes) => {
+                const color = colorDeMes(mes);
+                const activo = mesElegido === mes;
+                return (
+                  <button
+                    key={mes}
+                    type="button"
+                    onClick={() => elegirMes(mes)}
+                    className="text-sm rounded-md px-3 py-1.5 border transition-colors flex items-center gap-1.5"
+                    style={
+                      activo
+                        ? { backgroundColor: color + '26', borderColor: color, color }
+                        : { borderColor: '#2f3a4d', color: '#cbd5e1' }
+                    }
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    {mes}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -493,7 +510,10 @@ function EvaluacionesActivas({ meses, activos, onToggle }) {
       <div className="space-y-2">
         {meses.map((mes) => (
           <div key={mes} className="flex items-center justify-between bg-ink-800 border border-ink-600 rounded-md px-3 py-2">
-            <span className="text-sm text-slate-200">{mes}</span>
+            <span className="text-sm text-slate-200 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(mes) }} />
+              {mes}
+            </span>
             <div className="flex items-center gap-2">
               <span className={'text-xs font-medium ' + (activos[mes] ? 'text-accent-300' : 'text-slate-500')}>
                 {activos[mes] ? 'Activado' : 'Desactivado'}
@@ -521,27 +541,44 @@ function LinksPorCategoriaYMes({ meses }) {
     <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-3">
       <h2 className="text-sm font-semibold text-slate-100">Links por categoría + mes</h2>
       <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-        {meses.flatMap((mes) =>
-          CATEGORIAS_EVALUACION_DOCENTE.map((categoria) => {
-            const url = `${window.location.origin}/evaluar/${slug(categoria)}/${slug(mes)}`;
-            const id = `${categoria}-${mes}`;
-            return (
-              <div key={id} className="flex items-center justify-between gap-3 bg-ink-800 border border-ink-600 rounded-md px-3 py-2">
-                <div className="min-w-0">
-                  <div className="text-sm text-slate-200">{categoria} · {mes}</div>
-                  <div className="text-xs text-slate-500 truncate">{url}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => copiarLink(url, id)}
-                  className="shrink-0 text-xs text-slate-300 border border-ink-600 rounded-md px-2.5 py-1.5 hover:bg-ink-700 transition-colors"
-                >
-                  {copiado === id ? 'Copiado' : 'Copiar'}
-                </button>
+        {meses.map((mes) => {
+          const color = colorDeMes(mes);
+          return (
+            <details key={mes} className="group rounded-md border border-ink-600 overflow-hidden" open={meses.length === 1}>
+              <summary
+                className="flex items-center justify-between gap-2 px-3 py-2 cursor-pointer select-none bg-ink-800 hover:bg-ink-700 transition-colors list-none"
+                style={{ borderLeft: `3px solid ${color}` }}
+              >
+                <span className="text-sm text-slate-200 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                  {mes}
+                </span>
+                <span className="text-slate-500 text-xs transition-transform group-open:rotate-180">▾</span>
+              </summary>
+              <div className="space-y-2 p-2 bg-ink-900">
+                {CATEGORIAS_EVALUACION_DOCENTE.map((categoria) => {
+                  const url = `${window.location.origin}/evaluar/${slug(categoria)}/${slug(mes)}`;
+                  const id = `${categoria}-${mes}`;
+                  return (
+                    <div key={id} className="flex items-center justify-between gap-3 bg-ink-800 border border-ink-600 rounded-md px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-slate-200">{categoria}</div>
+                        <div className="text-xs text-slate-500 truncate">{url}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copiarLink(url, id)}
+                        className="shrink-0 text-xs text-slate-300 border border-ink-600 rounded-md px-2.5 py-1.5 hover:bg-ink-700 transition-colors"
+                      >
+                        {copiado === id ? 'Copiado' : 'Copiar'}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })
-        )}
+            </details>
+          );
+        })}
       </div>
     </section>
   );

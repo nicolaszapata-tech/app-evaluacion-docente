@@ -16,6 +16,28 @@ export function slug(texto) {
   return normalizar(texto).replace(/\s+/g, '-');
 }
 
+/** Color fijo por mes (para separar visualmente Agosto/Septiembre/... en toda
+ *  la app -- chips, filas de tabla, botones de Estadísticas, links). Los 5
+ *  meses reales de este ciclo (agosto-diciembre) tienen color fijo; si algún
+ *  día aparece un mes fuera de esa lista (2027...), cae a un color
+ *  determinístico de una paleta de reserva en vez de romperse. */
+const COLOR_MES_FIJO = {
+  agosto: '#5b7fff',
+  septiembre: '#f59e0b',
+  octubre: '#10b981',
+  noviembre: '#f43f5e',
+  diciembre: '#a78bfa',
+};
+const PALETA_MESES_RESERVA = ['#22d3ee', '#fb923c', '#84cc16', '#e879f9', '#38bdf8', '#facc15', '#f472b6'];
+
+export function colorDeMes(mes) {
+  const clave = normalizar(mes);
+  if (COLOR_MES_FIJO[clave]) return COLOR_MES_FIJO[clave];
+  let hash = 0;
+  for (let i = 0; i < clave.length; i++) hash = (hash * 31 + clave.charCodeAt(i)) >>> 0;
+  return PALETA_MESES_RESERVA[hash % PALETA_MESES_RESERVA.length];
+}
+
 export function categoriaDeSlug(s) {
   return CATEGORIAS_EVALUACION_DOCENTE.find((c) => slug(c) === s) || null;
 }
