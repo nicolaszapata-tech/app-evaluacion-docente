@@ -27,7 +27,7 @@ import {
   togglearMesActivo,
 } from '../lib/evaluacionDocente.js';
 
-const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas', PANEL: 'panel' };
+const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas' };
 
 export default function EvaluacionDocentePanel() {
   const [vista, setVista] = useState(VISTAS.TABLA);
@@ -63,24 +63,37 @@ export default function EvaluacionDocentePanel() {
 
   if (cargando) return <p className="text-sm text-slate-400">Cargando…</p>;
 
+  // El rail derecho (Evaluaciones activas + Links) solo se muestra en la
+  // vista "Grupos" -- a pedido explícito del usuario 2026-09-01: no debe
+  // aparecer en Estadísticas, y NO debe ser una pestaña nueva ("Panel"),
+  // solo condicionarse a la vista actual dentro del mismo layout de siempre.
+  const mostrarRailDerecho = vista === VISTAS.TABLA;
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-6 items-start">
-      <div>
+    <div className={
+      'grid grid-cols-1 gap-6 items-start ' +
+      (mostrarRailDerecho ? 'lg:grid-cols-[180px_1fr_360px]' : 'lg:grid-cols-[180px_1fr]')
+    }>
+      {/* Orden en pantallas angostas: Nav -> switches/links -> contenido
+          principal (que puede ser una tabla larga) -- así los switches
+          nunca quedan escondidos abajo de todo al hacer scroll. En pantallas
+          grandes (lg+) vuelve al orden Nav | Contenido | Rail derecho. */}
+      <div className="order-1">
         <NavLateral vista={vista} onCambiarVista={setVista} />
       </div>
 
-      <div className="min-w-0">
+      {mostrarRailDerecho && (
+        <div className="order-2 lg:order-3 space-y-6">
+          <EvaluacionesActivas meses={meses} activos={activos} onToggle={onToggle} />
+          <LinksPorCategoriaYMes meses={meses} />
+        </div>
+      )}
+
+      <div className="order-3 lg:order-2 min-w-0">
         {error && (
           <div className="mb-4 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>
         )}
-        {vista === VISTAS.TABLA && <TablaGrupos meses={meses} activos={activos} />}
-        {vista === VISTAS.ESTADISTICAS && <Estadisticas meses={meses} />}
-        {vista === VISTAS.PANEL && (
-          <div className="space-y-6">
-            <EvaluacionesActivas meses={meses} activos={activos} onToggle={onToggle} />
-            <LinksPorCategoriaYMes meses={meses} />
-          </div>
-        )}
+        {vista === VISTAS.TABLA ? <TablaGrupos meses={meses} activos={activos} /> : <Estadisticas meses={meses} />}
       </div>
     </div>
   );
@@ -90,7 +103,6 @@ function NavLateral({ vista, onCambiarVista }) {
   const items = [
     { id: VISTAS.TABLA, label: 'Grupos', icono: '☰' },
     { id: VISTAS.ESTADISTICAS, label: 'Estadísticas', icono: '📊' },
-    { id: VISTAS.PANEL, label: 'Panel', icono: '⚙️' },
   ];
   return (
     <nav className="flex lg:flex-col gap-2">
