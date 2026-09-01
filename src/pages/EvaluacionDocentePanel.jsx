@@ -408,12 +408,24 @@ function Estadisticas({ meses }) {
     }
   }
 
-  async function guardarEstudiantesActivos(mes, valor) {
-    setEstudiantesActivosMapa((prev) => ({ ...prev, [mes]: valor }));
+  // 2026-09-01: botón explícito "Sincronizar" al lado del input (a pedido
+  // del usuario) -- guarda Estudiantes Activos y de una vuelve a pedir
+  // crudo+stats (cargar() completo, mismo camino que el botón "Actualizar"
+  // de arriba) para que Respuestas/Promotores/Pasivos/etc. de esa columna
+  // queden al día en el mismo clic, sin depender de blur ni de un segundo
+  // clic aparte en "Actualizar".
+  const [mesSincronizando, setMesSincronizando] = useState(null);
+
+  async function sincronizarEstudiantesActivos(mes, valor) {
+    setMesSincronizando(mes);
+    setError(null);
     try {
       await actualizarEstudiantesActivos(mes, valor);
+      await cargar();
     } catch (e) {
       setError(e.message || String(e));
+    } finally {
+      setMesSincronizando(null);
     }
   }
 
@@ -489,7 +501,8 @@ function Estadisticas({ meses }) {
           <TablaNpsMensual2026
             crudo={crudo}
             estudiantesActivosMapa={estudiantesActivosMapa}
-            onGuardarEstudiantesActivos={guardarEstudiantesActivos}
+            mesSincronizando={mesSincronizando}
+            onSincronizarEstudiantesActivos={sincronizarEstudiantesActivos}
           />
 
           <div className="border-t border-ink-700 pt-4">
@@ -619,18 +632,39 @@ function serieNps2026_(crudo) {
   });
 }
 
+/** Texto de etiqueta para mostrar encima de cada barra/punto -- '' (no
+ *  null/undefined) para los meses sin dato, así Plotly no imprime "null". */
+function etiquetasNps_(serie) {
+  return serie.map((v) => (typeof v === 'number' ? v.toFixed(1) : ''));
+}
+
+/** Gráfico combinado (mixto) -- 2026-09-01, a pedido del usuario: 2025 como
+ *  barras (año cerrado, foto fija) y 2026 como línea con marcadores (año en
+ *  curso, la línea resalta la tendencia mes a mes) -- ambos con el valor
+ *  impreso encima de la barra/punto y eje Y fijo en 0-100 (escala real del
+ *  NPS, no autoescalado al máximo de los datos). */
 function NpsComparativo2025vs2026({ crudo }) {
   const serie2026 = useMemo(() => serieNps2026_(crudo), [crudo]);
 
   const data = useMemo(() => [
-    { type: 'bar', name: '2025', x: MESES_ES, y: NPS_2025_FIJO, marker: { color: COLOR_NPS_2025 } },
-    { type: 'bar', name: '2026', x: MESES_ES, y: serie2026, marker: { color: COLOR_NPS_2026 } },
+    {
+      type: 'bar', name: '2025', x: MESES_ES, y: NPS_2025_FIJO,
+      marker: { color: COLOR_NPS_2025 },
+      text: etiquetasNps_(NPS_2025_FIJO), textposition: 'outside', textfont: { color: COLOR_NPS_2025, size: 10 },
+      cliponaxis: false,
+    },
+    {
+      type: 'scatter', mode: 'lines+markers+text', name: '2026', x: MESES_ES, y: serie2026,
+      line: { color: COLOR_NPS_2026, width: 3 }, marker: { color: COLOR_NPS_2026, size: 8 },
+      text: etiquetasNps_(serie2026), textposition: 'top center', textfont: { color: COLOR_NPS_2026, size: 10 },
+      cliponaxis: false, connectgaps: false,
+    },
   ], [serie2026]);
 
   const layout = useMemo(() => ({
-    barmode: 'group',
-    height: 340,
-    yaxis: { title: 'NPS (%)', rangemode: 'tozero' },
+    height: 360,
+    margin: { t: 40, r: 16, b: 40, l: 48 },
+    yaxis: { title: 'NPS (%)', range: [0, 100] },
     xaxis: { tickangle: -20 },
   }), []);
 
@@ -640,7 +674,7 @@ function NpsComparativo2025vs2026({ crudo }) {
       <p className="text-xs text-slate-400 mb-2">
         % Promotores (9-10) menos % Detractores (0-6), mes a mes. 2025 y Enero-Julio 2026 son una foto fija del reporte institucional (ese proceso ya no se puede re-auditar); Agosto 2026 en adelante se calcula en vivo con cada respuesta que llega.
       </p>
-      <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 340 }} />
+      <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 360 }} />
     </div>
   );
 }
@@ -699,7 +733,7 @@ function columnaDelMes_(mes, indice, crudo, estudiantesActivosMapa) {
   };
 }
 
-function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, onGuardarEstudiantesActivos }) {
+function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, onSincronizarEstudiantesActivos }) {
   const columnas = useMemo(
     () => MESES_ES.map((mes, i) => columnaDelMes_(mes, i, crudo, estudiantesActivosMapa)),
     [crudo, estudiantesActivosMapa]
@@ -731,7 +765,8 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, onGuardarEstudiant
                   {fila.key === 'estudiantesActivos' && c.editable ? (
                     <InputEstudiantesActivos
                       valor={c.estudiantesActivos}
-                      onGuardar={(valor) => onGuardarEstudiantesActivos(c.mes, valor)}
+                      sincronizando={mesSincronizando === c.mes}
+                      onSincronizar={(valor) => onSincronizarEstudiantesActivos(c.mes, valor)}
                     />
                   ) : (
                     formatearValorTabla_(c[fila.key], fila.formato)
@@ -746,32 +781,48 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, onGuardarEstudiant
   );
 }
 
-/** Input numérico controlado que solo persiste (llama onGuardar) al perder
- *  el foco -- evita mandar una escritura al webhook de n8n por cada tecla. */
-function InputEstudiantesActivos({ valor, onGuardar }) {
+/** Input numérico + botón "↻ Sincronizar" explícito al lado -- 2026-09-01,
+ *  a pedido del usuario: escribir el número solo lo deja en el campo, hay
+ *  que darle al botón (o Enter) para que se guarde Y se recalculen
+ *  Respuestas/Promotores/etc. de esa misma columna (ver
+ *  sincronizarEstudiantesActivos en Estadisticas -- guarda y vuelve a
+ *  pedir crudo+stats en el mismo clic). */
+function InputEstudiantesActivos({ valor, sincronizando, onSincronizar }) {
   const [texto, setTexto] = useState(valor === null || valor === undefined ? '' : String(valor));
 
   useEffect(() => {
     setTexto(valor === null || valor === undefined ? '' : String(valor));
   }, [valor]);
 
-  function confirmar() {
+  function disparar() {
     const limpio = texto.replace(/\D/g, '');
     const numero = limpio === '' ? null : Number(limpio);
     setTexto(numero === null ? '' : String(numero));
-    if (numero !== valor) onGuardar(numero);
+    onSincronizar(numero);
   }
 
   return (
-    <input
-      type="text"
-      inputMode="numeric"
-      value={texto}
-      onChange={(e) => setTexto(e.target.value)}
-      onBlur={confirmar}
-      placeholder="—"
-      className="w-20 bg-ink-900 border border-ink-600 rounded px-2 py-1 text-right text-slate-100 focus:outline-none focus:border-accent-500"
-    />
+    <span className="inline-flex items-center gap-1">
+      <input
+        type="text"
+        inputMode="numeric"
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') disparar(); }}
+        disabled={sincronizando}
+        placeholder="—"
+        className="w-16 bg-ink-900 border border-ink-600 rounded px-1.5 py-1 text-right text-slate-100 focus:outline-none focus:border-accent-500 disabled:opacity-50"
+      />
+      <button
+        type="button"
+        onClick={disparar}
+        disabled={sincronizando}
+        title="Guardar y recalcular indicadores de este mes"
+        className="shrink-0 leading-none rounded px-1.5 py-1.5 border border-ink-600 text-slate-300 hover:bg-ink-700 hover:text-accent-300 hover:border-accent-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
+      >
+        {sincronizando ? '…' : '↻'}
+      </button>
+    </span>
   );
 }
 
