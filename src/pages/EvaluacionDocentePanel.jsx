@@ -35,7 +35,7 @@ import {
   togglearMesActivo,
 } from '../lib/evaluacionDocente.js';
 
-const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas' };
+const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas', RANKING: 'ranking' };
 
 export default function EvaluacionDocentePanel() {
   const [vista, setVista] = useState(VISTAS.TABLA);
@@ -101,7 +101,9 @@ export default function EvaluacionDocentePanel() {
         {error && (
           <div className="mb-4 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>
         )}
-        {vista === VISTAS.TABLA ? <TablaGrupos meses={meses} activos={activos} /> : <Estadisticas meses={meses} />}
+        {vista === VISTAS.TABLA && <TablaGrupos meses={meses} activos={activos} />}
+        {vista === VISTAS.ESTADISTICAS && <Estadisticas meses={meses} />}
+        {vista === VISTAS.RANKING && <RankingDocente />}
       </div>
     </div>
   );
@@ -111,6 +113,7 @@ function NavLateral({ vista, onCambiarVista }) {
   const items = [
     { id: VISTAS.TABLA, label: 'Grupos', icono: '☰' },
     { id: VISTAS.ESTADISTICAS, label: 'Estadísticas', icono: '📊' },
+    { id: VISTAS.RANKING, label: 'Ranking Docente', icono: '🏅' },
   ];
   return (
     <nav className="flex lg:flex-col gap-2">
@@ -395,6 +398,12 @@ const COLOR_2026 = '#d95926';
  *  el NPS no es una de las 3 secciones de preguntas -- es su propia
  *  pregunta). Azul acento de la app, ya usado como color "principal". */
 const COLOR_SECCION_NPS = '#5b7fff';
+
+/** Color propio de Ranking Docente -- verde/aqua (slot 3 del skill dataviz,
+ *  ya validado CVD-safe contra la superficie oscura de esta app), elegido
+ *  porque no colisiona con ningún color ya usado en Estadísticas (azul NPS,
+ *  naranja Docente, violeta Contenidos, celeste Plataforma). */
+const COLOR_SECCION_RANKING = '#199e70';
 
 /** Fondo pastel + borde izquierdo del color de la sección -- 2026-09-01, a
  *  pedido del usuario: "cada panel [tenga] un color especial... para que
@@ -1487,5 +1496,303 @@ function Switch({ activo, onClick }) {
         }
       />
     </button>
+  );
+}
+
+/* ============================================================================
+ *  Ranking Docente — 2026-09-01, a pedido del usuario: sección nueva para
+ *  "entender a los docentes", inspirada en una hoja institucional de
+ *  ranking de desempeño (6 criterios ponderados) de la que hoy solo
+ *  podemos calcular 1: "Evaluación Docente (Estudiantes)" -- exactamente
+ *  el promedio de las 6 preguntas del bloque Docente que ya recolectamos.
+ *  Los otros 5 criterios (Asistencia, Aprobación, Cierre de notas,
+ *  Estrategias, Participación en reuniones) viven en otros sistemas, no
+ *  están acá todavía -- por eso NO se arma una "calificación" ponderada
+ *  compuesta, solo indicadores descriptivos de lo que sí tenemos.
+ *
+ *  Diseño validado con una propuesta de Fable (2026-09-01) antes de
+ *  construir: esto es un panel de ACOMPAÑAMIENTO, no una tabla de
+ *  posiciones -- cada docente se compara contra sí mismo y contra el
+ *  promedio institucional, nunca contra sus compañeros ordenados. La
+ *  lista de abajo va alfabética a propósito, no por desempeño.
+ * ==========================================================================*/
+
+/** Docentes "placeholder" que no son personas reales (docentes genéricos
+ *  de inducción, suplencias sin asignar, etc.) -- se excluyen del ranking
+ *  de raíz. Lista manual por ahora (v1); cuando exista un catálogo real
+ *  de docentes en Supabase, esto se reemplaza por un flag en esa tabla en
+ *  vez de comparar nombres a mano. */
+const DOCENTES_EXCLUIDOS_RANKING = new Set(['Docente Inducción']);
+
+/** Umbral de muestra para RANKING INDIVIDUAL -- más estricto que
+ *  N_MINIMO_CONFIABLE (=5, pensado para categorías de programa completas
+ *  con muchos estudiantes detrás). Comparar personas por nombre con pocas
+ *  respuestas es mucho más riesgoso que comparar categorías -- 2-3
+ *  estudiantes descontentos (o contentos) pueden hundir/inflar a alguien
+ *  injustamente. Por debajo de N_MIN_DOCENTE_OCULTO el docente ni aparece
+ *  en la lista; entre ese piso y N_MIN_DOCENTE_CONFIABLE aparece marcado
+ *  "muestra en construcción". */
+const N_MIN_DOCENTE_OCULTO = 5;
+const N_MIN_DOCENTE_CONFIABLE = 15;
+
+/** Agrupa las filas crudas (traen docente/materia/comentario desde
+ *  2026-09-01, ver "Calcular Stats" del workflow del panel) por docente,
+ *  calculando lo que la ficha necesita. Excluye placeholders y filas sin
+ *  nombre de docente. */
+function construirRankingDocentes_(crudo) {
+  const mapa = {};
+  (crudo || []).forEach((grupo) => {
+    (grupo.filas || []).forEach((f) => {
+      const nombre = (f.docente || '').trim();
+      if (!nombre || DOCENTES_EXCLUIDOS_RANKING.has(nombre)) return;
+      if (!mapa[nombre]) mapa[nombre] = { nombre, areas: new Set(), materias: new Set(), filas: [] };
+      if (grupo.categoria_programa) mapa[nombre].areas.add(grupo.categoria_programa);
+      if (f.materia) mapa[nombre].materias.add(f.materia);
+      mapa[nombre].filas.push({ ...f, mes_calificacion: grupo.mes_calificacion });
+    });
+  });
+
+  return Object.values(mapa).map((d) => {
+    const total = d.filas.length;
+    const promedioDocente = calcularPromedioClaves(d.filas, SECCION_DOCENTE.keys);
+    const porPregunta = {};
+    SECCION_DOCENTE.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(d.filas, [k]); });
+    const conComentario = d.filas.filter((f) => f.docente_comentarios);
+    const longitudPromedio = conComentario.length
+      ? Math.round(conComentario.reduce((s, f) => s + f.docente_comentarios.length, 0) / conComentario.length)
+      : null;
+    const confiabilidad = total < N_MIN_DOCENTE_OCULTO ? 'oculto' : total < N_MIN_DOCENTE_CONFIABLE ? 'construccion' : 'confiable';
+    return {
+      nombre: d.nombre,
+      areas: Array.from(d.areas).sort(),
+      materias: Array.from(d.materias).sort(),
+      filas: d.filas,
+      totalRespuestas: total,
+      promedioDocente,
+      porPregunta,
+      comentarios: { conteo: conComentario.length, longitudPromedio },
+      confiabilidad,
+    };
+  }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+function RankingDocente() {
+  const [crudo, setCrudo] = useState(null);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState('');
+  const [seleccionado, setSeleccionado] = useState(null);
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      setCargando(true);
+      setError('');
+      try {
+        const { crudo } = await fetchStatsYCrudo();
+        if (vivo) setCrudo(crudo);
+      } catch (e) {
+        if (vivo) setError(e.message || String(e));
+      } finally {
+        if (vivo) setCargando(false);
+      }
+    })();
+    return () => { vivo = false; };
+  }, []);
+
+  const docentes = useMemo(() => construirRankingDocentes_(crudo), [crudo]);
+  const visibles = useMemo(() => docentes.filter((d) => d.confiabilidad !== 'oculto'), [docentes]);
+  const ocultosCount = docentes.length - visibles.length;
+  const promedioInstitucional = useMemo(() => {
+    const todas = (crudo || []).flatMap((g) => g.filas || []);
+    const porPregunta = {};
+    SECCION_DOCENTE.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(todas, [k]); });
+    return porPregunta;
+  }, [crudo]);
+
+  const docenteActivo = visibles.find((d) => d.nombre === seleccionado) || null;
+  const estiloPanel = estiloPanelSeccion_(COLOR_SECCION_RANKING);
+
+  if (cargando) return <p className="text-sm text-slate-400">Cargando…</p>;
+  if (error) {
+    return <div className="text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md p-3 border" style={estiloPanel}>
+        <p className="text-sm font-semibold mb-1" style={{ color: COLOR_SECCION_RANKING }}>Ranking Docente</p>
+        <p className="text-xs text-slate-400">
+          Panel de acompañamiento, no una tabla de posiciones: cada docente se compara contra sí mismo y contra el promedio institucional, nunca contra sus compañeros. Datos desde Agosto 2026 (las respuestas que nosotros mismos recolectamos). Con menos de {N_MIN_DOCENTE_OCULTO} respuestas acumuladas un docente todavía no aparece acá{ocultosCount > 0 ? ` (${ocultosCount} en ese caso ahora mismo)` : ''}; entre {N_MIN_DOCENTE_OCULTO} y {N_MIN_DOCENTE_CONFIABLE} se marca "⚠ muestra en construcción".
+        </p>
+      </div>
+
+      <div className="rounded-md border overflow-x-auto" style={estiloPanel}>
+        <table className="text-xs w-full whitespace-nowrap border-collapse">
+          <thead>
+            <tr>
+              <Th>Docente</Th>
+              <Th>Área(s)</Th>
+              <Th right>Respuestas</Th>
+              <Th right>Promedio Docente</Th>
+              <th className="py-1.5 pr-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibles.length === 0 && (
+              <tr><td colSpan={5} className="py-4 text-center text-slate-500">Todavía no hay docentes con suficientes respuestas acumuladas.</td></tr>
+            )}
+            {visibles.map((d) => {
+              const enConstruccion = d.confiabilidad === 'construccion';
+              const activo = d.nombre === seleccionado;
+              return (
+                <tr
+                  key={d.nombre}
+                  className={'border-t border-ink-700 cursor-pointer transition-colors ' + (activo ? 'bg-ink-700/50' : 'hover:bg-ink-800/60')}
+                  onClick={() => setSeleccionado(activo ? null : d.nombre)}
+                >
+                  <Td>{d.nombre}</Td>
+                  <Td>{d.areas.join(' · ') || '—'}</Td>
+                  <Td right>{d.totalRespuestas}</Td>
+                  <Td right>
+                    <span className="inline-flex items-center gap-1 justify-end">
+                      {comaDecimal_((d.promedioDocente ?? 0).toFixed(2))}
+                      {enConstruccion && (
+                        <span className="text-amber-400" title={`Entre ${N_MIN_DOCENTE_OCULTO} y ${N_MIN_DOCENTE_CONFIABLE} respuestas -- muestra en construcción`}>⚠</span>
+                      )}
+                    </span>
+                  </Td>
+                  <td className="py-1.5 pr-3 text-right text-accent-400">{activo ? '▾' : '▸'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {docenteActivo && (
+        <FichaDocente
+          docente={docenteActivo}
+          promedioInstitucional={promedioInstitucional}
+          enConstruccion={docenteActivo.confiabilidad === 'construccion'}
+        />
+      )}
+    </div>
+  );
+}
+
+function FichaDocente({ docente, promedioInstitucional, enConstruccion }) {
+  const dataPreguntas = useMemo(() => {
+    const labels = SECCION_DOCENTE.keys.map((k) => ETIQUETA_CORTA[k] || k);
+    const valoresDocente = SECCION_DOCENTE.keys.map((k) => docente.porPregunta[k]);
+    const valoresInstitucional = SECCION_DOCENTE.keys.map((k) => promedioInstitucional[k]);
+    return [
+      {
+        type: 'bar', orientation: 'h', name: docente.nombre, y: labels, x: valoresDocente,
+        marker: { color: SECCION_DOCENTE.color },
+        text: etiquetasDecimal_(valoresDocente), textposition: 'outside', textfont: { color: SECCION_DOCENTE.color, size: 10 },
+      },
+      {
+        type: 'bar', orientation: 'h', name: 'Promedio institucional', y: labels, x: valoresInstitucional,
+        marker: { color: '#4a5875' },
+        text: etiquetasDecimal_(valoresInstitucional), textposition: 'outside', textfont: { color: '#94a3b8', size: 10 },
+      },
+    ];
+  }, [docente, promedioInstitucional]);
+
+  const layoutPreguntas = useMemo(() => ({
+    height: 300,
+    margin: { t: 24, r: 40, b: 32, l: 140 },
+    separators: ',.',
+    barmode: 'group',
+    xaxis: { title: 'Promedio /5', range: [0, 5.6] },
+    legend: { orientation: 'h', y: -0.18 },
+  }), []);
+
+  const distribucion = useMemo(() => {
+    const conteos = [0, 0, 0, 0, 0];
+    docente.filas.forEach((f) => {
+      const prom = calcularPromedioClaves([f], SECCION_DOCENTE.keys);
+      if (typeof prom === 'number') {
+        const bucket = Math.min(5, Math.max(1, Math.round(prom)));
+        conteos[bucket - 1] += 1;
+      }
+    });
+    return conteos;
+  }, [docente]);
+
+  const dataDistribucion = useMemo(() => [{
+    type: 'bar', x: ['1', '2', '3', '4', '5'], y: distribucion,
+    marker: { color: SECCION_DOCENTE.color },
+    text: distribucion.map(String), textposition: 'outside',
+  }], [distribucion]);
+
+  const layoutDistribucion = useMemo(() => ({
+    height: 220,
+    margin: { t: 16, r: 16, b: 32, l: 40 },
+    separators: ',.',
+    xaxis: { title: 'Promedio de esa respuesta, redondeado (1-5)' },
+    yaxis: { title: 'Respuestas' },
+  }), []);
+
+  const materiasDetalle = useMemo(() => docente.materias.map((materia) => {
+    const filasMateria = docente.filas.filter((f) => f.materia === materia);
+    return { materia, n: filasMateria.length, promedio: calcularPromedioClaves(filasMateria, SECCION_DOCENTE.keys) };
+  }), [docente]);
+
+  return (
+    <div className="rounded-md p-4 border space-y-4" style={estiloPanelSeccion_(COLOR_SECCION_RANKING)}>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <p className="text-sm font-semibold text-slate-100">{docente.nombre}</p>
+          <p className="text-xs text-slate-400">{docente.areas.join(' · ')} · {docente.totalRespuestas} respuesta(s)</p>
+        </div>
+        {enConstruccion && (
+          <span className="text-[11px] font-medium text-amber-300 bg-amber-950/40 border border-amber-800 rounded px-2 py-1">
+            ⚠ Muestra en construcción -- menos de {N_MIN_DOCENTE_CONFIABLE} respuestas acumuladas, estos números todavía pueden moverse mucho con cada respuesta nueva.
+          </span>
+        )}
+      </div>
+
+      <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+        <p className="text-xs text-slate-300 mb-2">Bloque Docente, pregunta por pregunta -- vs. promedio institucional del mismo período</p>
+        <PlotlyChart data={dataPreguntas} layout={layoutPreguntas} style={{ width: '100%', height: 300 }} />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3">
+        <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+          <p className="text-xs text-slate-300 mb-2">Distribución de respuestas (detecta polarización, no solo el promedio)</p>
+          <PlotlyChart data={dataDistribucion} layout={layoutDistribucion} style={{ width: '100%', height: 220 }} />
+        </div>
+
+        <div className="bg-ink-800 border border-ink-600 rounded-md p-3 space-y-3">
+          {materiasDetalle.length > 1 && (
+            <div>
+              <p className="text-xs text-slate-300 mb-1.5">Por materia</p>
+              <table className="text-xs w-full">
+                <tbody>
+                  {materiasDetalle.map((m) => (
+                    <tr key={m.materia} className="border-t border-ink-700">
+                      <Td>{m.materia}</Td>
+                      <Td right>{m.n} resp.</Td>
+                      <Td right>{comaDecimal_((m.promedio ?? 0).toFixed(2))}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-slate-300 mb-1">Comentarios de estudiantes</p>
+            {docente.comentarios.conteo > 0 ? (
+              <p className="text-xs text-slate-400">
+                {docente.comentarios.conteo} de {docente.totalRespuestas} respuesta(s) incluyeron un comentario (largo promedio ~{docente.comentarios.longitudPromedio} caracteres). El contenido no se muestra acá todavía -- queda pendiente para una fase futura, con más volumen y acceso restringido.
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500">Sin comentarios registrados todavía.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
