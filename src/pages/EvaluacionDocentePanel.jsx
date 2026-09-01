@@ -1036,6 +1036,10 @@ function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, cr
             </tr>
           </thead>
           <tbody>
+            {/* Solo lectura -- se configura una vez en la tabla de NPS de
+                arriba y estas 3 secciones lo toman del mismo mes, no se
+                vuelve a pedir acá (ver comentario del componente). */}
+            <FilaSeccion label="Estudiantes Activos" columnas={columnas} valor={(c) => c.estudiantesActivos} formato="entero" />
             <FilaSeccion label="Respuestas Obtenidas" columnas={columnas} valor={(c) => c.respuestas} formato="entero" />
             <FilaSeccion label="Tasa de Respuesta" columnas={columnas} valor={(c) => calcularTasaRespuesta(c.respuestas, c.estudiantesActivos)} formato="porcentaje" />
             {CATEGORIAS_TABLA_SATISFACCION.map((cat) => (
