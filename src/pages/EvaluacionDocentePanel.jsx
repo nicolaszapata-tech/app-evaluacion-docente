@@ -391,6 +391,21 @@ const COLOR_CATEGORIA = {
 const COLOR_2025 = '#3987e5';
 const COLOR_2026 = '#d95926';
 
+/** Color propio de la sección NPS (no viene de SECCIONES_EVALUACION porque
+ *  el NPS no es una de las 3 secciones de preguntas -- es su propia
+ *  pregunta). Azul acento de la app, ya usado como color "principal". */
+const COLOR_SECCION_NPS = '#5b7fff';
+
+/** Fondo pastel + borde izquierdo del color de la sección -- 2026-09-01, a
+ *  pedido del usuario: "cada panel [tenga] un color especial... para que
+ *  se vean secciones diferentes". Mismo lenguaje visual que ya usa
+ *  BoxplotSeccion (borde izquierdo grueso, borde general tenue), sumando
+ *  un fondo muy sutil (~8% de opacidad, alcanza para diferenciar sin
+ *  perder contraste del texto claro sobre fondo oscuro). */
+function estiloPanelSeccion_(color) {
+  return { backgroundColor: color + '14', borderColor: color + '33', borderLeftWidth: 4, borderLeftColor: color };
+}
+
 /** Mínimo de respuestas combinadas para que una matriz de correlación
  *  diga algo real -- con menos de esto, cualquier r es ruido de muestra
  *  chica (más estricto que N_MINIMO_CONFIABLE porque acá se cruzan pares
@@ -687,17 +702,25 @@ function serieNps2026_(crudo) {
   });
 }
 
+/** Separador decimal "," en vez de "." (convención en español) -- a pedido
+ *  del usuario 2026-09-01, aplica a toda la sección NPS/Satisfacción:
+ *  etiquetas de gráfico (acá abajo), celdas de tabla (formatearValorTabla_)
+ *  y ejes/hover de Plotly (ver `separators: ',.'` en cada layout). */
+function comaDecimal_(texto) {
+  return texto.replace('.', ',');
+}
+
 /** Texto de etiqueta para mostrar encima de cada barra/punto -- '' (no
  *  null/undefined) para los meses sin dato, así Plotly no imprime "null". */
 function etiquetasNps_(serie) {
-  return serie.map((v) => (typeof v === 'number' ? v.toFixed(1) : ''));
+  return serie.map((v) => (typeof v === 'number' ? comaDecimal_(v.toFixed(1)) : ''));
 }
 
 /** Igual que etiquetasNps_ pero con 2 decimales -- para los promedios /5 de
  *  Satisfacción Docente/Contenidos/Plataforma (misma precisión que la
  *  tabla, ver formatearValorTabla_ formato "decimal"). */
 function etiquetasDecimal_(serie) {
-  return serie.map((v) => (typeof v === 'number' ? v.toFixed(2) : ''));
+  return serie.map((v) => (typeof v === 'number' ? comaDecimal_(v.toFixed(2)) : ''));
 }
 
 /** Líneas superpuestas (evolución mensual) -- 2026-09-01, a pedido del
@@ -727,13 +750,14 @@ function NpsComparativo2025vs2026({ crudo }) {
   const layout = useMemo(() => ({
     height: 360,
     margin: { t: 40, r: 16, b: 40, l: 48 },
+    separators: ',.',
     yaxis: { title: 'NPS (%)', range: [0, 100] },
     xaxis: { tickangle: -20 },
   }), []);
 
   return (
-    <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
-      <p className="text-sm font-semibold text-slate-100 mb-1">NPS 2025 vs NPS 2026</p>
+    <div className="rounded-md p-3 border" style={estiloPanelSeccion_(COLOR_SECCION_NPS)}>
+      <p className="text-sm font-semibold mb-1" style={{ color: COLOR_SECCION_NPS }}>NPS 2025 vs NPS 2026</p>
       <p className="text-xs text-slate-400 mb-2">
         % Promotores (9-10) menos % Detractores (0-6), mes a mes. 2025 y Enero-Julio 2026 son una foto fija del reporte institucional (ese proceso ya no se puede re-auditar); Agosto 2026 en adelante se calcula en vivo con cada respuesta que llega.
       </p>
@@ -756,8 +780,8 @@ const FILAS_TABLA_NPS = [
 
 function formatearValorTabla_(valor, formato) {
   if (valor === null || valor === undefined || Number.isNaN(valor)) return '—';
-  if (formato === 'porcentaje') return `${valor}%`;
-  if (formato === 'decimal') return valor.toFixed(2);
+  if (formato === 'porcentaje') return `${comaDecimal_(String(valor))}%`;
+  if (formato === 'decimal') return comaDecimal_(valor.toFixed(2));
   return String(Math.round(valor));
 }
 
@@ -833,16 +857,18 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, 
     onSincronizarEstudiantesActivos(mes, numero);
   }
 
+  const estiloPanel = estiloPanelSeccion_(COLOR_SECCION_NPS);
+
   return (
-    <div className="bg-ink-800 border border-ink-600 rounded-md p-3 overflow-x-auto">
-      <p className="text-sm font-semibold text-slate-100 mb-1">Indicadores NPS 2026 por mes</p>
+    <div className="rounded-md p-3 border overflow-x-auto" style={estiloPanel}>
+      <p className="text-sm font-semibold mb-1" style={{ color: COLOR_SECCION_NPS }}>Indicadores NPS 2026 por mes</p>
       <p className="text-xs text-slate-400 mb-3">
         Enero-Julio: foto fija del reporte institucional. Agosto en adelante: calculado en vivo -- el único dato manual es <b className="text-slate-200">Estudiantes Activos</b>. El botón <b className="text-slate-200">↻</b> del encabezado guarda ese número y recalcula el resto de la columna.
       </p>
       <table className="text-xs whitespace-nowrap border-collapse">
         <thead>
           <tr>
-            <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0 bg-ink-800">Indicador</th>
+            <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0" style={{ backgroundColor: estiloPanel.backgroundColor }}>Indicador</th>
             {columnas.map((c) => (
               <th key={c.mes} className="text-right text-slate-400 font-medium py-1.5 px-3">
                 <span className="inline-flex items-center gap-1 justify-end">
@@ -866,7 +892,10 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, 
         <tbody>
           {FILAS_TABLA_NPS.map((fila) => (
             <tr key={fila.key} className={'border-t border-ink-700 ' + (fila.destacado ? 'bg-ink-700/40' : '')}>
-              <td className={'py-1.5 pr-4 sticky left-0 bg-ink-800 ' + (fila.destacado ? 'font-semibold text-slate-100' : 'text-slate-300')}>
+              <td
+                className={'py-1.5 pr-4 sticky left-0 ' + (fila.destacado ? 'font-semibold text-slate-100' : 'text-slate-300')}
+                style={{ backgroundColor: estiloPanel.backgroundColor }}
+              >
                 {fila.label}
               </td>
               {columnas.map((c) => (
@@ -970,10 +999,13 @@ function columnaSeccion_(mes, indice, crudo, seccion, datosFijo2026, estudiantes
  *  la columna. `muestraChica` es opcional: si la da, esa celda puntual se
  *  reemplaza por "⚠" cuando esa categoría tuvo menos de N_MINIMO_CONFIABLE
  *  respuestas ese mes (en vez de mostrar un promedio poco confiable). */
-function FilaSeccion({ label, columnas, valor, formato, destacado, muestraChica }) {
+function FilaSeccion({ label, columnas, valor, formato, destacado, muestraChica, fondoIndicador }) {
   return (
     <tr className={'border-t border-ink-700 ' + (destacado ? 'bg-ink-700/40' : '')}>
-      <td className={'py-1.5 pr-4 sticky left-0 bg-ink-800 ' + (destacado ? 'font-semibold text-slate-100' : 'text-slate-300')}>
+      <td
+        className={'py-1.5 pr-4 sticky left-0 ' + (destacado ? 'font-semibold text-slate-100' : 'text-slate-300')}
+        style={fondoIndicador ? { backgroundColor: fondoIndicador } : undefined}
+      >
         {label}
       </td>
       {columnas.map((c) => {
@@ -990,14 +1022,18 @@ function FilaSeccion({ label, columnas, valor, formato, destacado, muestraChica 
   );
 }
 
+const MODOS_GRAFICO_SECCION = { GENERAL: 'general', DESCRIPTIVO: 'descriptivo' };
+
 function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, crudo, estudiantesActivosMapa }) {
+  const [modo, setModo] = useState(MODOS_GRAFICO_SECCION.GENERAL);
+
   const serie2026 = useMemo(() => seriePromedio2026_(crudo, seccion, datosFijo2026), [crudo, seccion, datosFijo2026]);
   const columnas = useMemo(
     () => MESES_ES.map((mes, i) => columnaSeccion_(mes, i, crudo, seccion, datosFijo2026, estudiantesActivosMapa)),
     [crudo, seccion, datosFijo2026, estudiantesActivosMapa]
   );
 
-  const data = useMemo(() => [
+  const dataGeneral = useMemo(() => [
     {
       type: 'scatter', mode: 'lines+markers+text', name: '2025', x: MESES_ES, y: promedios2025,
       line: { color: COLOR_2025, width: 3 }, marker: { color: COLOR_2025, size: 8 },
@@ -1012,24 +1048,60 @@ function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, cr
     },
   ], [promedios2025, serie2026]);
 
+  // "Descriptivo" -- 2026-09-01, a pedido del usuario: en vez de la
+  // comparación 2025 vs 2026 (institucional), desagrega 2026 por programa
+  // (Admin/Cont/Ing/Mkt), reusando los mismos valores por categoría que ya
+  // calcula `columnas` para la tabla de abajo -- ni un cálculo nuevo, solo
+  // otra forma de mirar los mismos datos. Mismos colores por categoría que
+  // ya se usan en el resto de Estadísticas (COLOR_CATEGORIA).
+  const dataDescriptivo = useMemo(() => CATEGORIAS_TABLA_SATISFACCION.map((cat) => {
+    const serie = columnas.map((c) => c[cat.key]);
+    const color = COLOR_CATEGORIA[cat.categoria] || '#94a3b8';
+    return {
+      type: 'scatter', mode: 'lines+markers+text', name: cat.categoria, x: MESES_ES, y: serie,
+      line: { color, width: 2 }, marker: { color, size: 6 },
+      text: etiquetasDecimal_(serie), textposition: 'top center', textfont: { color, size: 9 },
+      cliponaxis: false, connectgaps: false,
+    };
+  }), [columnas]);
+
   const layout = useMemo(() => ({
     height: 320,
     margin: { t: 32, r: 16, b: 36, l: 44 },
+    separators: ',.',
     yaxis: { title: 'Promedio /5', range: [1, 5] },
     xaxis: { tickangle: -20 },
   }), []);
 
+  const estiloPanel = estiloPanelSeccion_(seccion.color);
+
   return (
     <div className="space-y-3">
-      <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
-        <p className="text-sm font-semibold text-slate-100 mb-2" style={{ color: seccion.color }}>{titulo} 2025 vs {titulo} 2026</p>
-        <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 320 }} />
+      <div className="rounded-md p-3 border" style={estiloPanel}>
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <p className="text-sm font-semibold" style={{ color: seccion.color }}>
+            {modo === MODOS_GRAFICO_SECCION.GENERAL ? `${titulo} 2025 vs ${titulo} 2026` : `${titulo} por programa (2026)`}
+          </p>
+          <div className="flex gap-1.5">
+            <BotonModoGrafico activo={modo === MODOS_GRAFICO_SECCION.GENERAL} onClick={() => setModo(MODOS_GRAFICO_SECCION.GENERAL)} color={seccion.color}>
+              General
+            </BotonModoGrafico>
+            <BotonModoGrafico activo={modo === MODOS_GRAFICO_SECCION.DESCRIPTIVO} onClick={() => setModo(MODOS_GRAFICO_SECCION.DESCRIPTIVO)} color={seccion.color}>
+              Descriptivo
+            </BotonModoGrafico>
+          </div>
+        </div>
+        <PlotlyChart
+          data={modo === MODOS_GRAFICO_SECCION.GENERAL ? dataGeneral : dataDescriptivo}
+          layout={layout}
+          style={{ width: '100%', height: 320 }}
+        />
       </div>
-      <div className="bg-ink-800 border border-ink-600 rounded-md p-3 overflow-x-auto">
+      <div className="rounded-md p-3 border overflow-x-auto" style={estiloPanel}>
         <table className="text-xs whitespace-nowrap border-collapse">
           <thead>
             <tr>
-              <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0 bg-ink-800">Indicador</th>
+              <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0" style={{ backgroundColor: estiloPanel.backgroundColor }}>Indicador</th>
               {columnas.map((c) => (
                 <th key={c.mes} className="text-right text-slate-400 font-medium py-1.5 px-3">{c.mes.slice(0, 3)}</th>
               ))}
@@ -1039,9 +1111,9 @@ function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, cr
             {/* Solo lectura -- se configura una vez en la tabla de NPS de
                 arriba y estas 3 secciones lo toman del mismo mes, no se
                 vuelve a pedir acá (ver comentario del componente). */}
-            <FilaSeccion label="Estudiantes Activos" columnas={columnas} valor={(c) => c.estudiantesActivos} formato="entero" />
-            <FilaSeccion label="Respuestas Obtenidas" columnas={columnas} valor={(c) => c.respuestas} formato="entero" />
-            <FilaSeccion label="Tasa de Respuesta" columnas={columnas} valor={(c) => calcularTasaRespuesta(c.respuestas, c.estudiantesActivos)} formato="porcentaje" />
+            <FilaSeccion label="Estudiantes Activos" columnas={columnas} valor={(c) => c.estudiantesActivos} formato="entero" fondoIndicador={estiloPanel.backgroundColor} />
+            <FilaSeccion label="Respuestas Obtenidas" columnas={columnas} valor={(c) => c.respuestas} formato="entero" fondoIndicador={estiloPanel.backgroundColor} />
+            <FilaSeccion label="Tasa de Respuesta" columnas={columnas} valor={(c) => calcularTasaRespuesta(c.respuestas, c.estudiantesActivos)} formato="porcentaje" fondoIndicador={estiloPanel.backgroundColor} />
             {CATEGORIAS_TABLA_SATISFACCION.map((cat) => (
               <FilaSeccion
                 key={cat.key}
@@ -1050,13 +1122,27 @@ function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, cr
                 valor={(c) => c[cat.key]}
                 formato="decimal"
                 muestraChica={(c) => c.muestraChica[cat.key]}
+                fondoIndicador={estiloPanel.backgroundColor}
               />
             ))}
-            <FilaSeccion label="Promedio" columnas={columnas} valor={(c) => c.promedio} formato="decimal" destacado />
+            <FilaSeccion label="Promedio" columnas={columnas} valor={(c) => c.promedio} formato="decimal" destacado fondoIndicador={estiloPanel.backgroundColor} />
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+function BotonModoGrafico({ activo, onClick, color, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-[11px] rounded-md px-2.5 py-1 border transition-colors"
+      style={activo ? { backgroundColor: color + '2e', borderColor: color, color } : { borderColor: '#2f3a4d', color: '#94a3b8' }}
+    >
+      {children}
+    </button>
   );
 }
 
