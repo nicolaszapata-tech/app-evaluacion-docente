@@ -699,7 +699,7 @@ function formatearValorTabla_(valor, formato) {
 
 /** Datos de una columna (mes) de la tabla: Enero-Julio fijo (TABLA_NPS_2026_FIJA,
  *  no editable), Agosto en adelante calculado en vivo desde `crudo` +
- *  Estudiantes Activos manual (editable, ver InputEstudiantesActivos). */
+ *  Estudiantes Activos manual (editable, ver TablaNpsMensual2026). */
 function columnaDelMes_(mes, indice, crudo, estudiantesActivosMapa) {
   if (indice < TABLA_NPS_2026_FIJA.nps.length) {
     const i = indice;
@@ -740,18 +740,62 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, 
     [crudo, estudiantesActivosMapa]
   );
 
+  // 2026-09-01: el botón "↻ Sincronizar" se movió del lado del input a al
+  // lado del título del mes en el encabezado (a pedido del usuario) -- por
+  // eso el borrador del input vive ACÁ (no adentro de un input propio),
+  // para que el botón del encabezado pueda leer/disparar con lo que el
+  // usuario esté escribiendo en esa columna. Se siembra una sola vez por
+  // mes (la primera vez que llega su valor real desde Supabase) y después
+  // el usuario es dueño del campo hasta que sincroniza.
+  const [borrador, setBorrador] = useState({});
+  useEffect(() => {
+    setBorrador((prev) => {
+      let cambio = false;
+      const next = { ...prev };
+      columnas.forEach((c) => {
+        if (c.editable && next[c.mes] === undefined) {
+          next[c.mes] = c.estudiantesActivos === null || c.estudiantesActivos === undefined ? '' : String(c.estudiantesActivos);
+          cambio = true;
+        }
+      });
+      return cambio ? next : prev;
+    });
+  }, [columnas]);
+
+  function sincronizar(mes) {
+    const limpio = (borrador[mes] || '').replace(/\D/g, '');
+    const numero = limpio === '' ? null : Number(limpio);
+    setBorrador((prev) => ({ ...prev, [mes]: numero === null ? '' : String(numero) }));
+    onSincronizarEstudiantesActivos(mes, numero);
+  }
+
   return (
     <div className="bg-ink-800 border border-ink-600 rounded-md p-3 overflow-x-auto">
       <p className="text-sm font-semibold text-slate-100 mb-1">Indicadores NPS 2026 por mes</p>
       <p className="text-xs text-slate-400 mb-3">
-        Enero-Julio: foto fija del reporte institucional. Agosto en adelante: calculado en vivo -- el único dato manual es <b className="text-slate-200">Estudiantes Activos</b>.
+        Enero-Julio: foto fija del reporte institucional. Agosto en adelante: calculado en vivo -- el único dato manual es <b className="text-slate-200">Estudiantes Activos</b>. El botón <b className="text-slate-200">↻</b> del encabezado guarda ese número y recalcula el resto de la columna.
       </p>
       <table className="text-xs whitespace-nowrap border-collapse">
         <thead>
           <tr>
             <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0 bg-ink-800">Indicador</th>
             {columnas.map((c) => (
-              <th key={c.mes} className="text-right text-slate-400 font-medium py-1.5 px-3">{c.mes.slice(0, 3)}</th>
+              <th key={c.mes} className="text-right text-slate-400 font-medium py-1.5 px-3">
+                <span className="inline-flex items-center gap-1 justify-end">
+                  {c.mes.slice(0, 3)}
+                  {c.editable && (
+                    <button
+                      type="button"
+                      onClick={() => sincronizar(c.mes)}
+                      disabled={mesSincronizando === c.mes}
+                      title={`Guardar Estudiantes Activos de ${c.mes} y recalcular esta columna`}
+                      className="shrink-0 leading-none rounded px-1 py-0.5 border border-ink-600 text-[10px] font-normal text-slate-300 hover:bg-ink-700 hover:text-accent-300 hover:border-accent-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                    >
+                      {mesSincronizando === c.mes ? '…' : '↻'}
+                    </button>
+                  )}
+                </span>
+              </th>
             ))}
           </tr>
         </thead>
@@ -764,10 +808,15 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, 
               {columnas.map((c) => (
                 <td key={c.mes} className={'text-right py-1.5 px-3 ' + (fila.destacado ? 'font-semibold text-slate-100' : 'text-slate-200')}>
                   {fila.key === 'estudiantesActivos' && c.editable ? (
-                    <InputEstudiantesActivos
-                      valor={c.estudiantesActivos}
-                      sincronizando={mesSincronizando === c.mes}
-                      onSincronizar={(valor) => onSincronizarEstudiantesActivos(c.mes, valor)}
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={borrador[c.mes] ?? ''}
+                      onChange={(e) => setBorrador((prev) => ({ ...prev, [c.mes]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') sincronizar(c.mes); }}
+                      disabled={mesSincronizando === c.mes}
+                      placeholder="—"
+                      className="w-16 bg-ink-900 border border-ink-600 rounded px-1.5 py-1 text-right text-slate-100 focus:outline-none focus:border-accent-500 disabled:opacity-50"
                     />
                   ) : (
                     formatearValorTabla_(c[fila.key], fila.formato)
@@ -779,51 +828,6 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, 
         </tbody>
       </table>
     </div>
-  );
-}
-
-/** Input numérico + botón "↻ Sincronizar" explícito al lado -- 2026-09-01,
- *  a pedido del usuario: escribir el número solo lo deja en el campo, hay
- *  que darle al botón (o Enter) para que se guarde Y se recalculen
- *  Respuestas/Promotores/etc. de esa misma columna (ver
- *  sincronizarEstudiantesActivos en Estadisticas -- guarda y vuelve a
- *  pedir crudo+stats en el mismo clic). */
-function InputEstudiantesActivos({ valor, sincronizando, onSincronizar }) {
-  const [texto, setTexto] = useState(valor === null || valor === undefined ? '' : String(valor));
-
-  useEffect(() => {
-    setTexto(valor === null || valor === undefined ? '' : String(valor));
-  }, [valor]);
-
-  function disparar() {
-    const limpio = texto.replace(/\D/g, '');
-    const numero = limpio === '' ? null : Number(limpio);
-    setTexto(numero === null ? '' : String(numero));
-    onSincronizar(numero);
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1">
-      <input
-        type="text"
-        inputMode="numeric"
-        value={texto}
-        onChange={(e) => setTexto(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') disparar(); }}
-        disabled={sincronizando}
-        placeholder="—"
-        className="w-16 bg-ink-900 border border-ink-600 rounded px-1.5 py-1 text-right text-slate-100 focus:outline-none focus:border-accent-500 disabled:opacity-50"
-      />
-      <button
-        type="button"
-        onClick={disparar}
-        disabled={sincronizando}
-        title="Guardar y recalcular indicadores de este mes"
-        className="shrink-0 leading-none rounded px-1.5 py-1.5 border border-ink-600 text-slate-300 hover:bg-ink-700 hover:text-accent-300 hover:border-accent-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
-      >
-        {sincronizando ? '…' : '↻'}
-      </button>
-    </span>
   );
 }
 
