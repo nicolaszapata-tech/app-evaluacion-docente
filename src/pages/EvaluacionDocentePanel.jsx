@@ -3,9 +3,13 @@ import Combobox from '../components/Combobox.jsx';
 import PlotlyChart from '../components/PlotlyChart.jsx';
 import { normalizar } from '../lib/normalizar.js';
 import {
+  actualizarEstudiantesActivos,
+  calcularMetricasNPS,
+  calcularTasaRespuesta,
   CATEGORIAS_EVALUACION_DOCENTE,
   colorDeMes,
   fetchCrudoHistoricoEneroJulio,
+  fetchEstudiantesActivosMapa,
   fetchGruposEvaluacionDocente,
   formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
@@ -14,13 +18,16 @@ import {
   icWilson,
   matrizCorrelacion,
   MES_HISTORICO_ENERO_JULIO,
+  MESES_ES,
+  NPS_2025_FIJO,
   PREGUNTAS_LIKERT_KEYS,
   resumenDeFilas,
   slug,
+  TABLA_NPS_2026_FIJA,
   togglearMesActivo,
 } from '../lib/evaluacionDocente.js';
 
-const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas' };
+const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas', PANEL: 'panel' };
 
 export default function EvaluacionDocentePanel() {
   const [vista, setVista] = useState(VISTAS.TABLA);
@@ -57,25 +64,23 @@ export default function EvaluacionDocentePanel() {
   if (cargando) return <p className="text-sm text-slate-400">Cargando…</p>;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr_360px] gap-6 items-start">
-      {/* Orden en pantallas angostas: Nav -> switches/links -> contenido
-          principal (que puede ser una tabla larga) -- así los switches
-          nunca quedan escondidos abajo de todo al hacer scroll. En pantallas
-          grandes (lg+) vuelve al orden Nav | Contenido | Rail derecho. */}
-      <div className="order-1">
+    <div className="grid grid-cols-1 lg:grid-cols-[180px_1fr] gap-6 items-start">
+      <div>
         <NavLateral vista={vista} onCambiarVista={setVista} />
       </div>
 
-      <div className="order-2 lg:order-3 space-y-6">
-        <EvaluacionesActivas meses={meses} activos={activos} onToggle={onToggle} />
-        <LinksPorCategoriaYMes meses={meses} />
-      </div>
-
-      <div className="order-3 lg:order-2 min-w-0">
+      <div className="min-w-0">
         {error && (
           <div className="mb-4 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>
         )}
-        {vista === VISTAS.TABLA ? <TablaGrupos meses={meses} activos={activos} /> : <Estadisticas meses={meses} />}
+        {vista === VISTAS.TABLA && <TablaGrupos meses={meses} activos={activos} />}
+        {vista === VISTAS.ESTADISTICAS && <Estadisticas meses={meses} />}
+        {vista === VISTAS.PANEL && (
+          <div className="space-y-6">
+            <EvaluacionesActivas meses={meses} activos={activos} onToggle={onToggle} />
+            <LinksPorCategoriaYMes meses={meses} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -85,6 +90,7 @@ function NavLateral({ vista, onCambiarVista }) {
   const items = [
     { id: VISTAS.TABLA, label: 'Grupos', icono: '☰' },
     { id: VISTAS.ESTADISTICAS, label: 'Estadísticas', icono: '📊' },
+    { id: VISTAS.PANEL, label: 'Panel', icono: '⚙️' },
   ];
   return (
     <nav className="flex lg:flex-col gap-2">
@@ -350,6 +356,12 @@ const COLOR_CATEGORIA = {
   Marketing: '#f43f5e',
 };
 
+/** Par validado con scripts/validate_palette.js del skill dataviz (todos los
+ *  checks PASS contra la superficie oscura de esta app, #0f131a) -- 2025 en
+ *  azul, 2026 en naranja, mismo orden cronológico que las columnas. */
+const COLOR_NPS_2025 = '#3987e5';
+const COLOR_NPS_2026 = '#d95926';
+
 /** Mínimo de respuestas combinadas para que una matriz de correlación
  *  diga algo real -- con menos de esto, cualquier r es ruido de muestra
  *  chica (más estricto que N_MINIMO_CONFIABLE porque acá se cruzan pares
@@ -360,6 +372,7 @@ function Estadisticas({ meses }) {
   const [crudo, setCrudo] = useState(null);
   const [crudoHistorico, setCrudoHistorico] = useState(null);
   const [stats, setStats] = useState(null);
+  const [estudiantesActivosMapa, setEstudiantesActivosMapa] = useState({});
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
   const [mesElegido, setMesElegido] = useState(null);
@@ -369,13 +382,26 @@ function Estadisticas({ meses }) {
     setCargando(true);
     setError(null);
     try {
-      const { stats: s, crudo: c } = await fetchStatsYCrudo();
+      const [{ stats: s, crudo: c }, estudiantesActivos] = await Promise.all([
+        fetchStatsYCrudo(),
+        fetchEstudiantesActivosMapa(),
+      ]);
       setStats(s);
       setCrudo(c);
+      setEstudiantesActivosMapa(estudiantesActivos);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
       setCargando(false);
+    }
+  }
+
+  async function guardarEstudiantesActivos(mes, valor) {
+    setEstudiantesActivosMapa((prev) => ({ ...prev, [mes]: valor }));
+    try {
+      await actualizarEstudiantesActivos(mes, valor);
+    } catch (e) {
+      setError(e.message || String(e));
     }
   }
 
@@ -447,6 +473,18 @@ function Estadisticas({ meses }) {
 
       {!cargando && (
         <>
+          <NpsComparativo2025vs2026 crudo={crudo} />
+          <TablaNpsMensual2026
+            crudo={crudo}
+            estudiantesActivosMapa={estudiantesActivosMapa}
+            onGuardarEstudiantesActivos={guardarEstudiantesActivos}
+          />
+
+          <div className="border-t border-ink-700 pt-4">
+            <h3 className="text-sm font-semibold text-slate-100 mb-1">Detalle por mes y categoría</h3>
+            <p className="text-xs text-slate-400 mb-3">Distribución de respuestas, correlación entre preguntas y participación, por mes y categoría de programa.</p>
+          </div>
+
           <div>
             <p className="text-xs text-slate-400 mb-2">Mes</p>
             <div className="flex flex-wrap gap-2">
@@ -534,6 +572,194 @@ function Estadisticas({ meses }) {
         </>
       )}
     </section>
+  );
+}
+
+/* ============================================================================
+ *  NPS 2025 vs 2026 + tabla de indicadores 2026 — 2026-09-01, a pedido del
+ *  usuario: lo primero que se ve en Estadísticas, antes del detalle por mes
+ *  y categoría. Ver TABLA_NPS_2026_FIJA/NPS_2025_FIJO/calcularMetricasNPS
+ *  en evaluacionDocente.js para qué está fijo (histórico) y qué se calcula
+ *  en vivo (Agosto 2026 en adelante).
+ * ========================================================================== */
+
+/** Valores nps_recomendaria de TODAS las categorías combinadas para un mes
+ *  -- el NPS institucional no se corta por categoría (igual que
+ *  TABLA_NPS_2026_FIJA, que tampoco lo hace). */
+function valoresNpsDelMes_(crudo, mes) {
+  return (crudo || [])
+    .filter((d) => d.mes_calificacion === mes)
+    .flatMap((d) => d.filas)
+    .map((f) => f.nps_recomendaria)
+    .filter((v) => typeof v === 'number');
+}
+
+/** Serie de NPS 2026 mes a mes (12 valores, Enero-Diciembre): Enero-Julio
+ *  viene fijo de TABLA_NPS_2026_FIJA, Agosto en adelante se calcula en vivo
+ *  desde `crudo`. null en meses sin respuestas todavía -- así Plotly deja
+ *  el hueco en vez de dibujar una barra en 0 (que se leería como "NPS
+ *  cero" en vez de "sin datos"). */
+function serieNps2026_(crudo) {
+  return MESES_ES.map((mes, i) => {
+    if (i < TABLA_NPS_2026_FIJA.nps.length) return TABLA_NPS_2026_FIJA.nps[i];
+    const valores = valoresNpsDelMes_(crudo, mes);
+    return valores.length ? calcularMetricasNPS(valores).nps : null;
+  });
+}
+
+function NpsComparativo2025vs2026({ crudo }) {
+  const serie2026 = useMemo(() => serieNps2026_(crudo), [crudo]);
+
+  const data = useMemo(() => [
+    { type: 'bar', name: '2025', x: MESES_ES, y: NPS_2025_FIJO, marker: { color: COLOR_NPS_2025 } },
+    { type: 'bar', name: '2026', x: MESES_ES, y: serie2026, marker: { color: COLOR_NPS_2026 } },
+  ], [serie2026]);
+
+  const layout = useMemo(() => ({
+    barmode: 'group',
+    height: 340,
+    yaxis: { title: 'NPS (%)', rangemode: 'tozero' },
+    xaxis: { tickangle: -20 },
+  }), []);
+
+  return (
+    <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+      <p className="text-sm font-semibold text-slate-100 mb-1">NPS 2025 vs NPS 2026</p>
+      <p className="text-xs text-slate-400 mb-2">
+        % Promotores (9-10) menos % Detractores (0-6), mes a mes. 2025 y Enero-Julio 2026 son una foto fija del reporte institucional (ese proceso ya no se puede re-auditar); Agosto 2026 en adelante se calcula en vivo con cada respuesta que llega.
+      </p>
+      <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 340 }} />
+    </div>
+  );
+}
+
+const FILAS_TABLA_NPS = [
+  { key: 'estudiantesActivos', label: 'Estudiantes Activos', formato: 'entero' },
+  { key: 'respuestas', label: 'Respuestas Obtenidas', formato: 'entero' },
+  { key: 'tasaRespuesta', label: 'Tasa de Respuesta', formato: 'porcentaje' },
+  { key: 'promotores', label: 'Promotores (9 y 10)', formato: 'entero' },
+  { key: 'pasivos', label: 'Pasivos (7 y 8)', formato: 'entero' },
+  { key: 'detractores', label: 'Detractores (0-6)', formato: 'entero' },
+  { key: 'pctPromotores', label: '% Promotores', formato: 'porcentaje' },
+  { key: 'pctDetractores', label: '% Detractores', formato: 'porcentaje' },
+  { key: 'nps', label: 'NPS', formato: 'porcentaje', destacado: true },
+];
+
+function formatearValorTabla_(valor, formato) {
+  if (valor === null || valor === undefined || Number.isNaN(valor)) return '—';
+  return formato === 'porcentaje' ? `${valor}%` : String(Math.round(valor));
+}
+
+/** Datos de una columna (mes) de la tabla: Enero-Julio fijo (TABLA_NPS_2026_FIJA,
+ *  no editable), Agosto en adelante calculado en vivo desde `crudo` +
+ *  Estudiantes Activos manual (editable, ver InputEstudiantesActivos). */
+function columnaDelMes_(mes, indice, crudo, estudiantesActivosMapa) {
+  if (indice < TABLA_NPS_2026_FIJA.nps.length) {
+    const i = indice;
+    return {
+      mes,
+      editable: false,
+      estudiantesActivos: TABLA_NPS_2026_FIJA.estudiantesActivos[i],
+      respuestas: TABLA_NPS_2026_FIJA.respuestas[i],
+      tasaRespuesta: calcularTasaRespuesta(TABLA_NPS_2026_FIJA.respuestas[i], TABLA_NPS_2026_FIJA.estudiantesActivos[i]),
+      promotores: TABLA_NPS_2026_FIJA.promotores[i],
+      pasivos: TABLA_NPS_2026_FIJA.pasivos[i],
+      detractores: TABLA_NPS_2026_FIJA.detractores[i],
+      pctPromotores: TABLA_NPS_2026_FIJA.pctPromotores[i],
+      pctDetractores: TABLA_NPS_2026_FIJA.pctDetractores[i],
+      nps: TABLA_NPS_2026_FIJA.nps[i],
+    };
+  }
+  const metricas = calcularMetricasNPS(valoresNpsDelMes_(crudo, mes));
+  const estudiantesActivos = estudiantesActivosMapa[mes] ?? null;
+  return {
+    mes,
+    editable: true,
+    estudiantesActivos,
+    respuestas: metricas.respuestas,
+    tasaRespuesta: calcularTasaRespuesta(metricas.respuestas, estudiantesActivos),
+    promotores: metricas.promotores,
+    pasivos: metricas.pasivos,
+    detractores: metricas.detractores,
+    pctPromotores: metricas.pctPromotores,
+    pctDetractores: metricas.pctDetractores,
+    nps: metricas.nps,
+  };
+}
+
+function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, onGuardarEstudiantesActivos }) {
+  const columnas = useMemo(
+    () => MESES_ES.map((mes, i) => columnaDelMes_(mes, i, crudo, estudiantesActivosMapa)),
+    [crudo, estudiantesActivosMapa]
+  );
+
+  return (
+    <div className="bg-ink-800 border border-ink-600 rounded-md p-3 overflow-x-auto">
+      <p className="text-sm font-semibold text-slate-100 mb-1">Indicadores NPS 2026 por mes</p>
+      <p className="text-xs text-slate-400 mb-3">
+        Enero-Julio: foto fija del reporte institucional. Agosto en adelante: calculado en vivo -- el único dato manual es <b className="text-slate-200">Estudiantes Activos</b>.
+      </p>
+      <table className="text-xs whitespace-nowrap border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0 bg-ink-800">Indicador</th>
+            {columnas.map((c) => (
+              <th key={c.mes} className="text-right text-slate-400 font-medium py-1.5 px-3">{c.mes.slice(0, 3)}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {FILAS_TABLA_NPS.map((fila) => (
+            <tr key={fila.key} className={'border-t border-ink-700 ' + (fila.destacado ? 'bg-ink-700/40' : '')}>
+              <td className={'py-1.5 pr-4 sticky left-0 bg-ink-800 ' + (fila.destacado ? 'font-semibold text-slate-100' : 'text-slate-300')}>
+                {fila.label}
+              </td>
+              {columnas.map((c) => (
+                <td key={c.mes} className={'text-right py-1.5 px-3 ' + (fila.destacado ? 'font-semibold text-slate-100' : 'text-slate-200')}>
+                  {fila.key === 'estudiantesActivos' && c.editable ? (
+                    <InputEstudiantesActivos
+                      valor={c.estudiantesActivos}
+                      onGuardar={(valor) => onGuardarEstudiantesActivos(c.mes, valor)}
+                    />
+                  ) : (
+                    formatearValorTabla_(c[fila.key], fila.formato)
+                  )}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Input numérico controlado que solo persiste (llama onGuardar) al perder
+ *  el foco -- evita mandar una escritura al webhook de n8n por cada tecla. */
+function InputEstudiantesActivos({ valor, onGuardar }) {
+  const [texto, setTexto] = useState(valor === null || valor === undefined ? '' : String(valor));
+
+  useEffect(() => {
+    setTexto(valor === null || valor === undefined ? '' : String(valor));
+  }, [valor]);
+
+  function confirmar() {
+    const limpio = texto.replace(/\D/g, '');
+    const numero = limpio === '' ? null : Number(limpio);
+    setTexto(numero === null ? '' : String(numero));
+    if (numero !== valor) onGuardar(numero);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={texto}
+      onChange={(e) => setTexto(e.target.value)}
+      onBlur={confirmar}
+      placeholder="—"
+      className="w-20 bg-ink-900 border border-ink-600 rounded px-2 py-1 text-right text-slate-100 focus:outline-none focus:border-accent-500"
+    />
   );
 }
 

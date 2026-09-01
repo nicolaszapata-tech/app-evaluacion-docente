@@ -179,6 +179,26 @@ export async function togglearMesActivo(mes, activo) {
   return llamarPanel_({ accion: 'toggle_mes', mes, activo });
 }
 
+/** mes_calificacion -> estudiantes_activos (número o null si nunca se
+ *  cargó). Único dato manual de la sección NPS de Estadísticas -- todo lo
+ *  demás (respuestas, promotores/pasivos/detractores, NPS) se calcula solo
+ *  desde consolidada_respuestas_evaluacion_docente. Lectura pública directa
+ *  (RLS SELECT, igual que fetchMesesActivosMapa); la escritura sí pasa por
+ *  el webhook de n8n (ver actualizarEstudiantesActivos). */
+export async function fetchEstudiantesActivosMapa() {
+  const { data, error } = await supabase
+    .from('evaluacion_docente_estudiantes_activos')
+    .select('mes_calificacion, estudiantes_activos');
+  if (error) throw error;
+  const mapa = {};
+  (data || []).forEach((r) => { mapa[r.mes_calificacion] = r.estudiantes_activos; });
+  return mapa;
+}
+
+export async function actualizarEstudiantesActivos(mes, estudiantesActivos) {
+  return llamarPanel_({ accion: 'set_estudiantes_activos', mes, estudiantes_activos: estudiantesActivos });
+}
+
 /** Las 13 preguntas Likert (1-5) de la evaluación -- clave compartida entre
  *  el cálculo de estadísticas (resumenDeFilas, matrizCorrelacion) y las
  *  etiquetas de UI (EvaluacionDocentePanel.jsx). */
@@ -249,6 +269,69 @@ export async function fetchCrudoHistoricoEneroJulio() {
     porCategoria[r.categoria_programa].filas.push(fila);
   });
   return Object.values(porCategoria);
+}
+
+/* ============================================================================
+ *  NPS histórico fijo (2025 completo + 2026 Enero-Julio) — 2026-09-01, a
+ *  pedido del usuario: "las estadisticas antes de agosto del 2026 son
+ *  fijas no podemos hacer nada porque eran datos que no controlabamos,
+ *  como ahora si los controlamos desde agosto... tomaremos los datos
+ *  reales". Estos números NO se recalculan ni se leen de Supabase -- son
+ *  una foto fija tomada del reporte institucional (Google Sheet "Satisfacción",
+ *  pestaña con los bloques NET PROMOTER SCORE 2025/2026), porque el proceso
+ *  de esos meses (Google Forms sin cédula, sin las tablas que tenemos hoy)
+ *  ya no se puede re-auditar. Desde Agosto 2026 en adelante todo se calcula
+ *  en vivo desde consolidada_respuestas_evaluacion_docente (ver
+ *  calcularMetricasNPS más abajo).
+ * ========================================================================== */
+
+export const MESES_ES = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
+  'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+/** NPS mensual 2025 (%), Enero-Diciembre. Diciembre quedó sin dato en la
+ *  fuente original (#DIV/0!, división por cero -- sin respuestas ese mes). */
+export const NPS_2025_FIJO = [66.04, 64.44, 66.80, 69.98, 68.57, 73.81, 64.07, 58.40, 65.06, 68.77, 66.94, null];
+
+/** Tabla NPS 2026 fija para Enero-Julio (7 meses, índice 0=Enero). Agosto en
+ *  adelante NO está acá -- se calcula en vivo (ver TablaNPSMensual2026 en
+ *  EvaluacionDocentePanel.jsx), incluido el Estudiantes Activos manual. */
+export const TABLA_NPS_2026_FIJA = {
+  estudiantesActivos: [1260, 1464, 1492, 1530, 1562, 1584, 1590],
+  respuestas: [537, 539, 654, 667, 622, 698, 557],
+  promotores: [391, 414, 504, 497, 493, 555, 426],
+  pasivos: [97, 91, 107, 128, 103, 99, 101],
+  detractores: [49, 34, 43, 42, 26, 44, 30],
+  pctPromotores: [72.80, 76.80, 77.10, 74.50, 79.30, 79.50, 76.48],
+  pctDetractores: [9.10, 6.30, 6.60, 6.30, 4.20, 6.30, 5.39],
+  nps: [63.70, 70.50, 70.50, 68.20, 75.10, 73.20, 71.10],
+};
+
+/** Promotores (9-10) / Pasivos (7-8) / Detractores (0-6) y NPS = %Promotores
+ *  - %Detractores, a partir de un array de valores nps_recomendaria (0-10) --
+ *  misma metodología NPS estándar que ya usaba el reporte institucional
+ *  (ver TABLA_NPS_2026_FIJA: Ene 2026 391 promotores/537 respuestas =
+ *  72.80% ✓, coincide con la fuente). */
+export function calcularMetricasNPS(valoresNps) {
+  const respuestas = valoresNps.length;
+  if (!respuestas) {
+    return { respuestas: 0, promotores: 0, pasivos: 0, detractores: 0, pctPromotores: null, pctDetractores: null, nps: null };
+  }
+  const promotores = valoresNps.filter((v) => v >= 9).length;
+  const pasivos = valoresNps.filter((v) => v === 7 || v === 8).length;
+  const detractores = valoresNps.filter((v) => v <= 6).length;
+  const pctPromotores = Math.round((promotores / respuestas) * 1000) / 10;
+  const pctDetractores = Math.round((detractores / respuestas) * 1000) / 10;
+  const nps = Math.round((pctPromotores - pctDetractores) * 10) / 10;
+  return { respuestas, promotores, pasivos, detractores, pctPromotores, pctDetractores, nps };
+}
+
+/** Respuestas / Estudiantes Activos, o null si no hay Estudiantes Activos
+ *  cargado todavía para ese mes (campo manual, ver fetchEstudiantesActivosMapa). */
+export function calcularTasaRespuesta(respuestas, estudiantesActivos) {
+  if (!estudiantesActivos) return null;
+  return Math.round((respuestas / estudiantesActivos) * 1000) / 10;
 }
 
 /** Promedio general (de las 13 preguntas), promedio de NPS y conteo, a
