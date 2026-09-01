@@ -308,6 +308,64 @@ export const TABLA_NPS_2026_FIJA = {
   nps: [63.70, 70.50, 70.50, 68.20, 75.10, 73.20, 71.10],
 };
 
+/** Respuestas Obtenidas 2026 fija (Enero-Julio) para las 3 secciones de
+ *  Satisfacción (Docente/Contenidos/Plataforma) -- confirmado en la hoja
+ *  que las 3 comparten exactamente los mismos 7 valores (son la misma
+ *  tanda de respuestas del mismo formulario, solo cambia qué preguntas se
+ *  promedian). OJO: son DISTINTOS de TABLA_NPS_2026_FIJA.respuestas (esa
+ *  es la pregunta de NPS, que en la fuente tiene una tasa de
+ *  completitud distinta a las preguntas Likert -- no es un error). */
+export const RESPUESTAS_SATISFACCION_2026_FIJO = [425, 495, 610, 667, 622, 698, 557];
+
+/** Promedio /5 mensual 2025 y tabla 2026 fija (Enero-Julio) para cada una
+ *  de las 3 secciones -- mismas foto fija institucional que NPS_2025_FIJO/
+ *  TABLA_NPS_2026_FIJA (ver comentario arriba del archivo). admin/cont/ing
+ *  son las 3 categorías que ya medía el reporte viejo (no había Marketing
+ *  en 2025 ni en la primera mitad de 2026); Agosto en adelante sí se
+ *  calcula Marketing porque ya existe en los datos reales (ver
+ *  SeccionSatisfaccion en EvaluacionDocentePanel.jsx). */
+export const SATISFACCION_DOCENTE_2025_PROMEDIO = [4.80, 4.80, 4.77, 4.8, 4.8, 4.8, 4.8, 4.8, 4.8, 4.7, 4.7, null];
+export const SATISFACCION_DOCENTE_2026_FIJO = {
+  admin: [4.84, 4.78, 4.77, 4.81, 4.81, 4.81, 4.78],
+  cont: [4.81, 4.85, 4.85, 4.67, 4.66, 4.66, 4.79],
+  ing: [4.71, 4.67, 4.67, 4.77, 4.77, 4.77, 4.72],
+  promedio: [4.8, 4.8, 4.8, 4.8, 4.7, 4.7, 4.8],
+};
+
+export const SATISFACCION_CONTENIDOS_2025_PROMEDIO = [4.70, 4.67, 4.67, 4.7, 4.7, 4.8, 4.6, 4.7, 4.7, 4.7, 4.7, null];
+export const SATISFACCION_CONTENIDOS_2026_FIJO = {
+  admin: [4.78, 4.71, 4.7, 4.7, 4.7, 4.7, 4.84],
+  cont: [4.74, 4.79, 4.79, 4.63, 4.63, 4.63, 4.67],
+  ing: [4.63, 4.63, 4.63, 4.62, 4.64, 4.64, 4.68],
+  promedio: [4.7, 4.7, 4.7, 4.7, 4.7, 4.7, 4.7],
+};
+
+/** Plataforma 2025 es la única de las 3 con los 12 meses completos en la
+ *  fuente (no tiene #DIV/0! en Diciembre). */
+export const SATISFACCION_PLATAFORMA_2025_PROMEDIO = [4.07, 3.50, 3.80, 3.5, 3.6, 4.0, 4.2, 4.2, 4.4, 4.5, 4.5, 4.4];
+export const SATISFACCION_PLATAFORMA_2026_FIJO = {
+  admin: [4.56, 4.62, 4.6, 4.63, 4.63, 4.63, 4.75],
+  cont: [4.57, 4.62, 4.62, 4.63, 4.66, 4.66, 4.5],
+  ing: [4.57, 4.5, 4.5, 4.61, 4.67, 4.67, 4.66],
+  promedio: [4.6, 4.6, 4.6, 4.6, 4.7, 4.7, 4.6],
+};
+
+/** Promedio de un subconjunto de preguntas (ej. las de una sección --
+ *  Plataforma/Docente/Contenidos) sobre un array de filas crudas, ignorando
+ *  valores faltantes (no los cuenta como 0). null si ninguna fila tiene
+ *  ninguna de esas preguntas contestada. */
+export function calcularPromedioClaves(filas, claves) {
+  let suma = 0;
+  let cuenta = 0;
+  (filas || []).forEach((f) => {
+    claves.forEach((k) => {
+      const v = f[k];
+      if (typeof v === 'number') { suma += v; cuenta++; }
+    });
+  });
+  return cuenta ? Math.round((suma / cuenta) * 100) / 100 : null;
+}
+
 /** Promotores (9-10) / Pasivos (7-8) / Detractores (0-6) y NPS = %Promotores
  *  - %Detractores, a partir de un array de valores nps_recomendaria (0-10) --
  *  misma metodología NPS estándar que ya usaba el reporte institucional

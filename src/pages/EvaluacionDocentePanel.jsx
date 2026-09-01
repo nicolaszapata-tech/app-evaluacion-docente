@@ -5,6 +5,7 @@ import { normalizar } from '../lib/normalizar.js';
 import {
   actualizarEstudiantesActivos,
   calcularMetricasNPS,
+  calcularPromedioClaves,
   calcularTasaRespuesta,
   CATEGORIAS_EVALUACION_DOCENTE,
   colorDeMes,
@@ -21,7 +22,14 @@ import {
   MESES_ES,
   NPS_2025_FIJO,
   PREGUNTAS_LIKERT_KEYS,
+  RESPUESTAS_SATISFACCION_2026_FIJO,
   resumenDeFilas,
+  SATISFACCION_CONTENIDOS_2025_PROMEDIO,
+  SATISFACCION_CONTENIDOS_2026_FIJO,
+  SATISFACCION_DOCENTE_2025_PROMEDIO,
+  SATISFACCION_DOCENTE_2026_FIJO,
+  SATISFACCION_PLATAFORMA_2025_PROMEDIO,
+  SATISFACCION_PLATAFORMA_2026_FIJO,
   slug,
   TABLA_NPS_2026_FIJA,
   togglearMesActivo,
@@ -342,6 +350,12 @@ const SECCIONES_EVALUACION = [
   },
 ];
 
+/** Atajos para no buscar en el array cada vez que se arma una sección
+ *  Docente/Contenidos/Plataforma de "2025 vs 2026" (ver SeccionSatisfaccion). */
+const SECCION_PLATAFORMA = SECCIONES_EVALUACION.find((s) => s.key === 'plataforma');
+const SECCION_DOCENTE = SECCIONES_EVALUACION.find((s) => s.key === 'docente');
+const SECCION_CONTENIDOS = SECCIONES_EVALUACION.find((s) => s.key === 'contenidos');
+
 /** Etiquetas cortas para el eje del mapa de calor de correlación (los
  *  labels completos de PREGUNTAS_LIKERT son muy largos para caber ahí). */
 const ETIQUETA_CORTA = {
@@ -370,9 +384,12 @@ const COLOR_CATEGORIA = {
 
 /** Par validado con scripts/validate_palette.js del skill dataviz (todos los
  *  checks PASS contra la superficie oscura de esta app, #0f131a) -- 2025 en
- *  azul, 2026 en naranja, mismo orden cronológico que las columnas. */
-const COLOR_NPS_2025 = '#3987e5';
-const COLOR_NPS_2026 = '#d95926';
+ *  azul, 2026 en naranja. Se reusa en las 4 secciones "2025 vs 2026"
+ *  (NPS + Docente + Contenidos + Plataforma) a propósito -- que "azul =
+ *  2025, naranja = 2026" sea una convención de toda la página, no algo
+ *  distinto por gráfico. */
+const COLOR_2025 = '#3987e5';
+const COLOR_2026 = '#d95926';
 
 /** Mínimo de respuestas combinadas para que una matriz de correlación
  *  diga algo real -- con menos de esto, cualquier r es ruido de muestra
@@ -505,6 +522,31 @@ function Estadisticas({ meses }) {
             onSincronizarEstudiantesActivos={sincronizarEstudiantesActivos}
           />
 
+          <SeccionSatisfaccion
+            titulo="Satisfacción Docente"
+            seccion={SECCION_DOCENTE}
+            promedios2025={SATISFACCION_DOCENTE_2025_PROMEDIO}
+            datosFijo2026={SATISFACCION_DOCENTE_2026_FIJO}
+            crudo={crudo}
+            estudiantesActivosMapa={estudiantesActivosMapa}
+          />
+          <SeccionSatisfaccion
+            titulo="Satisfacción Contenidos"
+            seccion={SECCION_CONTENIDOS}
+            promedios2025={SATISFACCION_CONTENIDOS_2025_PROMEDIO}
+            datosFijo2026={SATISFACCION_CONTENIDOS_2026_FIJO}
+            crudo={crudo}
+            estudiantesActivosMapa={estudiantesActivosMapa}
+          />
+          <SeccionSatisfaccion
+            titulo="Satisfacción Plataforma"
+            seccion={SECCION_PLATAFORMA}
+            promedios2025={SATISFACCION_PLATAFORMA_2025_PROMEDIO}
+            datosFijo2026={SATISFACCION_PLATAFORMA_2026_FIJO}
+            crudo={crudo}
+            estudiantesActivosMapa={estudiantesActivosMapa}
+          />
+
           <div className="border-t border-ink-700 pt-4">
             <h3 className="text-sm font-semibold text-slate-100 mb-1">Detalle por mes y categoría</h3>
             <p className="text-xs text-slate-400 mb-3">Distribución de respuestas, correlación entre preguntas y participación, por mes y categoría de programa.</p>
@@ -608,13 +650,26 @@ function Estadisticas({ meses }) {
  *  en vivo (Agosto 2026 en adelante).
  * ========================================================================== */
 
-/** Valores nps_recomendaria de TODAS las categorías combinadas para un mes
- *  -- el NPS institucional no se corta por categoría (igual que
- *  TABLA_NPS_2026_FIJA, que tampoco lo hace). */
+/** Filas crudas de TODAS las categorías combinadas para un mes -- el NPS
+ *  institucional no se corta por categoría (igual que TABLA_NPS_2026_FIJA,
+ *  que tampoco lo hace). También la usan las secciones de Satisfacción
+ *  Docente/Contenidos/Plataforma para su promedio institucional. */
+function filasDelMes_(crudo, mes) {
+  return (crudo || []).filter((d) => d.mes_calificacion === mes).flatMap((d) => d.filas);
+}
+
+/** Filas crudas de UNA categoría puntual en un mes -- para las columnas
+ *  Admin/Cont/Ing/Mkt de las secciones de Satisfacción (ver
+ *  SeccionSatisfaccion). `crudo` ya viene agrupado por categoria+mes (un
+ *  único elemento por combinación), así que alcanza con encontrarlo. */
+function filasDeCategoriaYMes_(crudo, categoria, mes) {
+  const entrada = (crudo || []).find((d) => d.categoria_programa === categoria && d.mes_calificacion === mes);
+  return entrada ? entrada.filas : [];
+}
+
+/** Valores nps_recomendaria de TODAS las categorías combinadas para un mes. */
 function valoresNpsDelMes_(crudo, mes) {
-  return (crudo || [])
-    .filter((d) => d.mes_calificacion === mes)
-    .flatMap((d) => d.filas)
+  return filasDelMes_(crudo, mes)
     .map((f) => f.nps_recomendaria)
     .filter((v) => typeof v === 'number');
 }
@@ -638,6 +693,13 @@ function etiquetasNps_(serie) {
   return serie.map((v) => (typeof v === 'number' ? v.toFixed(1) : ''));
 }
 
+/** Igual que etiquetasNps_ pero con 2 decimales -- para los promedios /5 de
+ *  Satisfacción Docente/Contenidos/Plataforma (misma precisión que la
+ *  tabla, ver formatearValorTabla_ formato "decimal"). */
+function etiquetasDecimal_(serie) {
+  return serie.map((v) => (typeof v === 'number' ? v.toFixed(2) : ''));
+}
+
 /** Líneas superpuestas (evolución mensual) -- 2026-09-01, a pedido del
  *  usuario (reemplaza el gráfico combinado de barras+línea anterior): las
  *  dos series en el mismo lenguaje visual (línea + marcador), una encima
@@ -650,14 +712,14 @@ function NpsComparativo2025vs2026({ crudo }) {
   const data = useMemo(() => [
     {
       type: 'scatter', mode: 'lines+markers+text', name: '2025', x: MESES_ES, y: NPS_2025_FIJO,
-      line: { color: COLOR_NPS_2025, width: 3 }, marker: { color: COLOR_NPS_2025, size: 8 },
-      text: etiquetasNps_(NPS_2025_FIJO), textposition: 'top center', textfont: { color: COLOR_NPS_2025, size: 10 },
+      line: { color: COLOR_2025, width: 3 }, marker: { color: COLOR_2025, size: 8 },
+      text: etiquetasNps_(NPS_2025_FIJO), textposition: 'top center', textfont: { color: COLOR_2025, size: 10 },
       cliponaxis: false, connectgaps: false,
     },
     {
       type: 'scatter', mode: 'lines+markers+text', name: '2026', x: MESES_ES, y: serie2026,
-      line: { color: COLOR_NPS_2026, width: 3 }, marker: { color: COLOR_NPS_2026, size: 8 },
-      text: etiquetasNps_(serie2026), textposition: 'bottom center', textfont: { color: COLOR_NPS_2026, size: 10 },
+      line: { color: COLOR_2026, width: 3 }, marker: { color: COLOR_2026, size: 8 },
+      text: etiquetasNps_(serie2026), textposition: 'bottom center', textfont: { color: COLOR_2026, size: 10 },
       cliponaxis: false, connectgaps: false,
     },
   ], [serie2026]);
@@ -694,7 +756,9 @@ const FILAS_TABLA_NPS = [
 
 function formatearValorTabla_(valor, formato) {
   if (valor === null || valor === undefined || Number.isNaN(valor)) return '—';
-  return formato === 'porcentaje' ? `${valor}%` : String(Math.round(valor));
+  if (formato === 'porcentaje') return `${valor}%`;
+  if (formato === 'decimal') return valor.toFixed(2);
+  return String(Math.round(valor));
 }
 
 /** Datos de una columna (mes) de la tabla: Enero-Julio fijo (TABLA_NPS_2026_FIJA,
@@ -827,6 +891,167 @@ function TablaNpsMensual2026({ crudo, estudiantesActivosMapa, mesSincronizando, 
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/* ============================================================================
+ *  Satisfacción Docente/Contenidos/Plataforma, 2025 vs 2026 — 2026-09-01, a
+ *  pedido del usuario: "algo similar a lo que ya logramos con nps" para
+ *  estas 3 secciones. Mismo patrón que NPS (línea superpuesta 2025 vs 2026
+ *  + tabla mensual, Enero-Julio fijo/Agosto en adelante en vivo), pero acá
+ *  la tabla SÍ se corta por categoría (Admin/Cont/Ing, que ya medía el
+ *  reporte viejo, + Marketing solo en vivo -- ver comentario de
+ *  SATISFACCION_DOCENTE_2026_FIJO en evaluacionDocente.js). Estudiantes
+ *  Activos NO se vuelve a pedir acá -- es el mismo dato institucional que
+ *  ya se carga en la tabla de NPS (mismo mes, mismo significado), así que
+ *  estas 3 secciones solo lo LEEN de estudiantesActivosMapa.
+ * ========================================================================== */
+
+const CATEGORIAS_TABLA_SATISFACCION = [
+  { key: 'admin', label: 'Admin', categoria: 'Administración' },
+  { key: 'cont', label: 'Cont', categoria: 'Contabilidad' },
+  { key: 'ing', label: 'Ing', categoria: 'Ingeniería' },
+  { key: 'mkt', label: 'Mkt', categoria: 'Marketing' },
+];
+
+/** Serie de Promedio 2026 mes a mes (12 valores) para una sección --
+ *  Enero-Julio fijo (datosFijo2026.promedio), Agosto en adelante calculado
+ *  en vivo con TODAS las categorías combinadas (igual criterio que
+ *  serieNps2026_: el promedio institucional no se corta por categoría). */
+function seriePromedio2026_(crudo, seccion, datosFijo2026) {
+  return MESES_ES.map((mes, i) => {
+    if (i < datosFijo2026.promedio.length) return datosFijo2026.promedio[i];
+    const filas = filasDelMes_(crudo, mes);
+    return filas.length ? calcularPromedioClaves(filas, seccion.keys) : null;
+  });
+}
+
+/** Datos de una columna (mes) de la tabla de una sección: Enero-Julio fijo,
+ *  Agosto en adelante calculado en vivo por categoría (con el mismo piso
+ *  N_MINIMO_CONFIABLE que ya usa TarjetaResumen -- un promedio con 1-2
+ *  respuestas no es una medición, ver ese comentario más abajo). */
+function columnaSeccion_(mes, indice, crudo, seccion, datosFijo2026, estudiantesActivosMapa) {
+  if (indice < datosFijo2026.promedio.length) {
+    const i = indice;
+    return {
+      mes,
+      respuestas: RESPUESTAS_SATISFACCION_2026_FIJO[i],
+      estudiantesActivos: TABLA_NPS_2026_FIJA.estudiantesActivos[i],
+      admin: datosFijo2026.admin[i],
+      cont: datosFijo2026.cont[i],
+      ing: datosFijo2026.ing[i],
+      mkt: null,
+      promedio: datosFijo2026.promedio[i],
+      muestraChica: {},
+    };
+  }
+  const valores = {};
+  const muestraChica = {};
+  CATEGORIAS_TABLA_SATISFACCION.forEach((cat) => {
+    const filas = filasDeCategoriaYMes_(crudo, cat.categoria, mes);
+    const chica = filas.length > 0 && filas.length < N_MINIMO_CONFIABLE;
+    valores[cat.key] = chica ? null : (filas.length ? calcularPromedioClaves(filas, seccion.keys) : null);
+    muestraChica[cat.key] = chica;
+  });
+  const filasTodas = filasDelMes_(crudo, mes);
+  return {
+    mes,
+    respuestas: filasTodas.length,
+    estudiantesActivos: estudiantesActivosMapa[mes] ?? null,
+    admin: valores.admin, cont: valores.cont, ing: valores.ing, mkt: valores.mkt,
+    promedio: filasTodas.length ? calcularPromedioClaves(filasTodas, seccion.keys) : null,
+    muestraChica,
+  };
+}
+
+/** Una fila de la tabla (<tr>) -- reusada para Respuestas/Tasa/Admin/Cont/
+ *  Ing/Mkt/Promedio, cada una con su propia función para sacar el valor de
+ *  la columna. `muestraChica` es opcional: si la da, esa celda puntual se
+ *  reemplaza por "⚠" cuando esa categoría tuvo menos de N_MINIMO_CONFIABLE
+ *  respuestas ese mes (en vez de mostrar un promedio poco confiable). */
+function FilaSeccion({ label, columnas, valor, formato, destacado, muestraChica }) {
+  return (
+    <tr className={'border-t border-ink-700 ' + (destacado ? 'bg-ink-700/40' : '')}>
+      <td className={'py-1.5 pr-4 sticky left-0 bg-ink-800 ' + (destacado ? 'font-semibold text-slate-100' : 'text-slate-300')}>
+        {label}
+      </td>
+      {columnas.map((c) => {
+        const chica = muestraChica ? muestraChica(c) : false;
+        return (
+          <td key={c.mes} className={'text-right py-1.5 px-3 ' + (destacado ? 'font-semibold text-slate-100' : 'text-slate-200')}>
+            {chica
+              ? <span className="text-amber-400" title={`Menos de ${N_MINIMO_CONFIABLE} respuestas -- promedio no confiable`}>⚠</span>
+              : formatearValorTabla_(valor(c), formato)}
+          </td>
+        );
+      })}
+    </tr>
+  );
+}
+
+function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, crudo, estudiantesActivosMapa }) {
+  const serie2026 = useMemo(() => seriePromedio2026_(crudo, seccion, datosFijo2026), [crudo, seccion, datosFijo2026]);
+  const columnas = useMemo(
+    () => MESES_ES.map((mes, i) => columnaSeccion_(mes, i, crudo, seccion, datosFijo2026, estudiantesActivosMapa)),
+    [crudo, seccion, datosFijo2026, estudiantesActivosMapa]
+  );
+
+  const data = useMemo(() => [
+    {
+      type: 'scatter', mode: 'lines+markers+text', name: '2025', x: MESES_ES, y: promedios2025,
+      line: { color: COLOR_2025, width: 3 }, marker: { color: COLOR_2025, size: 8 },
+      text: etiquetasDecimal_(promedios2025), textposition: 'top center', textfont: { color: COLOR_2025, size: 10 },
+      cliponaxis: false, connectgaps: false,
+    },
+    {
+      type: 'scatter', mode: 'lines+markers+text', name: '2026', x: MESES_ES, y: serie2026,
+      line: { color: COLOR_2026, width: 3 }, marker: { color: COLOR_2026, size: 8 },
+      text: etiquetasDecimal_(serie2026), textposition: 'bottom center', textfont: { color: COLOR_2026, size: 10 },
+      cliponaxis: false, connectgaps: false,
+    },
+  ], [promedios2025, serie2026]);
+
+  const layout = useMemo(() => ({
+    height: 320,
+    margin: { t: 32, r: 16, b: 36, l: 44 },
+    yaxis: { title: 'Promedio /5', range: [1, 5] },
+    xaxis: { tickangle: -20 },
+  }), []);
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
+        <p className="text-sm font-semibold text-slate-100 mb-2" style={{ color: seccion.color }}>{titulo} 2025 vs {titulo} 2026</p>
+        <PlotlyChart data={data} layout={layout} style={{ width: '100%', height: 320 }} />
+      </div>
+      <div className="bg-ink-800 border border-ink-600 rounded-md p-3 overflow-x-auto">
+        <table className="text-xs whitespace-nowrap border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left text-slate-400 font-medium py-1.5 pr-4 sticky left-0 bg-ink-800">Indicador</th>
+              {columnas.map((c) => (
+                <th key={c.mes} className="text-right text-slate-400 font-medium py-1.5 px-3">{c.mes.slice(0, 3)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <FilaSeccion label="Respuestas Obtenidas" columnas={columnas} valor={(c) => c.respuestas} formato="entero" />
+            <FilaSeccion label="Tasa de Respuesta" columnas={columnas} valor={(c) => calcularTasaRespuesta(c.respuestas, c.estudiantesActivos)} formato="porcentaje" />
+            {CATEGORIAS_TABLA_SATISFACCION.map((cat) => (
+              <FilaSeccion
+                key={cat.key}
+                label={cat.label}
+                columnas={columnas}
+                valor={(c) => c[cat.key]}
+                formato="decimal"
+                muestraChica={(c) => c.muestraChica[cat.key]}
+              />
+            ))}
+            <FilaSeccion label="Promedio" columnas={columnas} valor={(c) => c.promedio} formato="decimal" destacado />
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
