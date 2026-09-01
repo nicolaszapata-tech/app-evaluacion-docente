@@ -638,25 +638,26 @@ function etiquetasNps_(serie) {
   return serie.map((v) => (typeof v === 'number' ? v.toFixed(1) : ''));
 }
 
-/** Gráfico combinado (mixto) -- 2026-09-01, a pedido del usuario: 2025 como
- *  barras (año cerrado, foto fija) y 2026 como línea con marcadores (año en
- *  curso, la línea resalta la tendencia mes a mes) -- ambos con el valor
- *  impreso encima de la barra/punto y eje Y fijo en 0-100 (escala real del
- *  NPS, no autoescalado al máximo de los datos). */
+/** Líneas superpuestas (evolución mensual) -- 2026-09-01, a pedido del
+ *  usuario (reemplaza el gráfico combinado de barras+línea anterior): las
+ *  dos series en el mismo lenguaje visual (línea + marcador), una encima
+ *  de la otra mes a mes, con el valor impreso sobre cada punto y eje Y
+ *  fijo en 0-100 (escala real del NPS, no autoescalado al máximo de los
+ *  datos). */
 function NpsComparativo2025vs2026({ crudo }) {
   const serie2026 = useMemo(() => serieNps2026_(crudo), [crudo]);
 
   const data = useMemo(() => [
     {
-      type: 'bar', name: '2025', x: MESES_ES, y: NPS_2025_FIJO,
-      marker: { color: COLOR_NPS_2025 },
-      text: etiquetasNps_(NPS_2025_FIJO), textposition: 'outside', textfont: { color: COLOR_NPS_2025, size: 10 },
-      cliponaxis: false,
+      type: 'scatter', mode: 'lines+markers+text', name: '2025', x: MESES_ES, y: NPS_2025_FIJO,
+      line: { color: COLOR_NPS_2025, width: 3 }, marker: { color: COLOR_NPS_2025, size: 8 },
+      text: etiquetasNps_(NPS_2025_FIJO), textposition: 'top center', textfont: { color: COLOR_NPS_2025, size: 10 },
+      cliponaxis: false, connectgaps: false,
     },
     {
       type: 'scatter', mode: 'lines+markers+text', name: '2026', x: MESES_ES, y: serie2026,
       line: { color: COLOR_NPS_2026, width: 3 }, marker: { color: COLOR_NPS_2026, size: 8 },
-      text: etiquetasNps_(serie2026), textposition: 'top center', textfont: { color: COLOR_NPS_2026, size: 10 },
+      text: etiquetasNps_(serie2026), textposition: 'bottom center', textfont: { color: COLOR_NPS_2026, size: 10 },
       cliponaxis: false, connectgaps: false,
     },
   ], [serie2026]);
