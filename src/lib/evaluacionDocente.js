@@ -2,7 +2,7 @@ import { supabase } from './supabase.js';
 import { normalizar } from './normalizar.js';
 import { leerSesion } from './auth.js';
 
-/** Las 4 categorías fijas que ya trae base_de_grupos_evaluacion_docente
+/** Las 4 categorías fijas que ya trae doc_base_de_grupos
  *  (categoria_programa) -- los links se arman por categoría, NO por programa
  *  específico (decisión explícita del usuario, 2026-08-24). */
 export const CATEGORIAS_EVALUACION_DOCENTE = ['Administración', 'Contabilidad', 'Marketing', 'Ingeniería'];
@@ -55,7 +55,7 @@ export function sanitizarCedula(valor) {
 
 export async function fetchMesesDisponibles() {
   const { data, error } = await supabase
-    .from('base_de_grupos_evaluacion_docente')
+    .from('doc_base_de_grupos')
     .select('mes_calificacion');
   if (error) throw error;
   const meses = new Set((data || []).map((r) => r.mes_calificacion).filter(Boolean));
@@ -64,7 +64,7 @@ export async function fetchMesesDisponibles() {
 
 /** mes_calificacion -> activo, para el panel (evita una consulta por mes). */
 export async function fetchMesesActivosMapa() {
-  const { data, error } = await supabase.from('evaluacion_docente_meses_activos').select('mes_calificacion, activo');
+  const { data, error } = await supabase.from('doc_meses_activos').select('mes_calificacion, activo');
   if (error) throw error;
   const mapa = {};
   (data || []).forEach((r) => { mapa[r.mes_calificacion] = !!r.activo; });
@@ -73,7 +73,7 @@ export async function fetchMesesActivosMapa() {
 
 export async function fetchMesActivo(mes) {
   const { data, error } = await supabase
-    .from('evaluacion_docente_meses_activos')
+    .from('doc_meses_activos')
     .select('activo')
     .eq('mes_calificacion', mes)
     .maybeSingle();
@@ -83,11 +83,11 @@ export async function fetchMesActivo(mes) {
 
 /** Materias y docentes deduplicados de esa categoría+mes, para poblar los
  *  Combobox del formulario -- "link vivo": si se agrega un grupo nuevo a
- *  base_de_grupos_evaluacion_docente (sync horario), aparece acá sin tocar
+ *  doc_base_de_grupos (sync horario), aparece acá sin tocar
  *  el link. */
 export async function fetchOpcionesFormulario(categoria, mes) {
   const { data, error } = await supabase
-    .from('base_de_grupos_evaluacion_docente')
+    .from('doc_base_de_grupos')
     .select('subject_name, tutor_calendario, group_id')
     .eq('categoria_programa', categoria)
     .eq('mes_calificacion', mes);
@@ -119,7 +119,7 @@ export function formatearFechaDDMMYYYY(iso) {
 
 export async function fetchGruposEvaluacionDocente() {
   const { data, error } = await supabase
-    .from('base_de_grupos_evaluacion_docente')
+    .from('doc_base_de_grupos')
     .select(
       'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, horario, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
     )
@@ -140,12 +140,12 @@ export async function enviarEvaluacionDocente({ identidad, respuestas }) {
   const estudianteId = crypto.randomUUID();
 
   const { error: errEstudiante } = await supabase
-    .from('estudiantes_evaluacion_docente')
+    .from('doc_estudiantes')
     .insert({ id: estudianteId, ...identidad });
   if (errEstudiante) throw errEstudiante;
 
   const { error: errRespuestas } = await supabase
-    .from('consolidada_respuestas_evaluacion_docente')
+    .from('doc_respuestas_consolidada')
     .insert({ ...respuestas, estudiante_id: estudianteId });
   if (errRespuestas) throw errRespuestas;
 }
@@ -182,12 +182,12 @@ export async function togglearMesActivo(mes, activo) {
 /** mes_calificacion -> estudiantes_activos (número o null si nunca se
  *  cargó). Único dato manual de la sección NPS de Estadísticas -- todo lo
  *  demás (respuestas, promotores/pasivos/detractores, NPS) se calcula solo
- *  desde consolidada_respuestas_evaluacion_docente. Lectura pública directa
+ *  desde doc_respuestas_consolidada. Lectura pública directa
  *  (RLS SELECT, igual que fetchMesesActivosMapa); la escritura sí pasa por
  *  el webhook de n8n (ver actualizarEstudiantesActivos). */
 export async function fetchEstudiantesActivosMapa() {
   const { data, error } = await supabase
-    .from('evaluacion_docente_estudiantes_activos')
+    .from('doc_estudiantes_activos')
     .select('mes_calificacion, estudiantes_activos');
   if (error) throw error;
   const mapa = {};
@@ -242,7 +242,7 @@ export async function fetchStatsYCrudo() {
  *  generación de links de encuesta. */
 export const MES_HISTORICO_ENERO_JULIO = 'Histórico Enero-Julio 2026';
 
-const TABLA_HISTORICO_ENERO_JULIO = 'historico_enero_julio_2026_respuestas_evaluacion_docente';
+const TABLA_HISTORICO_ENERO_JULIO = 'doc_historico_enero_julio_2026';
 
 /** Igual forma que fetchCrudoEvaluacionDocente/fetchStatsYCrudo (array de
  *  {categoria_programa, mes_calificacion, filas}) para poder reusar
@@ -281,7 +281,7 @@ export async function fetchCrudoHistoricoEneroJulio() {
  *  pestaña con los bloques NET PROMOTER SCORE 2025/2026), porque el proceso
  *  de esos meses (Google Forms sin cédula, sin las tablas que tenemos hoy)
  *  ya no se puede re-auditar. Desde Agosto 2026 en adelante todo se calcula
- *  en vivo desde consolidada_respuestas_evaluacion_docente (ver
+ *  en vivo desde doc_respuestas_consolidada (ver
  *  calcularMetricasNPS más abajo).
  * ========================================================================== */
 

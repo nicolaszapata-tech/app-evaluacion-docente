@@ -486,7 +486,7 @@ function Estadisticas({ meses }) {
   useEffect(() => { cargar(); }, []);
 
   // El bloque histórico (Google Forms, Enero-Julio 2026) es una sola
-  // importación fija -- no vive en base_de_grupos_evaluacion_docente ni
+  // importación fija -- no vive en doc_base_de_grupos ni
   // tiene toggle, así que se agrega como un "mes" extra solo acá, sin
   // tocar la lista de meses que usan la tabla y los links de encuesta.
   const mesesConHistorico = useMemo(() => [...meses, MES_HISTORICO_ENERO_JULIO], [meses]);
@@ -513,7 +513,7 @@ function Estadisticas({ meses }) {
   const filasGlobal = porCategoria.flatMap((d) => d.filas);
   const global = { categoria_programa: 'Todas', resumen: resumenDeFilas(filasGlobal) };
   const seriesActivas = porCategoria.filter((d) => categoriasActivas.has(d.categoria_programa));
-  // El histórico no tiene cupos_activos (no viene de base_de_grupos_evaluacion_docente),
+  // El histórico no tiene cupos_activos (no viene de doc_base_de_grupos),
   // así que no hay participación/IC de Wilson que mostrar para ese bloque.
   const statsDelMes = esHistorico ? [] : (stats || []).filter((s) => s.mes_calificacion === mesElegido);
 
