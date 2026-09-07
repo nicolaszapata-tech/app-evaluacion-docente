@@ -1696,14 +1696,15 @@ function RankingDocente() {
             <tr>
               <Th>Docente</Th>
               <Th>Área(s)</Th>
-              <Th right>Respuestas / Esperadas</Th>
+              <Th right>Respuestas</Th>
+              <Th right>Esperadas</Th>
               <Th right>Promedio Docente</Th>
               <th className="py-1.5 pr-3"></th>
             </tr>
           </thead>
           <tbody>
             {visibles.length === 0 && (
-              <tr><td colSpan={5} className="py-4 text-center text-slate-500">Todavía no hay docentes con suficientes respuestas acumuladas.</td></tr>
+              <tr><td colSpan={6} className="py-4 text-center text-slate-500">Todavía no hay docentes con suficientes respuestas acumuladas.</td></tr>
             )}
             {visibles.map((d) => {
               const enConstruccion = d.confiabilidad === 'construccion';
@@ -1716,9 +1717,10 @@ function RankingDocente() {
                 >
                   <Td>{d.nombre}</Td>
                   <Td>{d.areas.join(' · ') || '—'}</Td>
+                  <Td right>{d.totalRespuestas}</Td>
                   <Td right>
-                    <span title={d.cuposEsperados ? `${d.totalRespuestas} respuesta(s) de ${d.cuposEsperados} estudiantes esperados (según cupos activos)` : 'No encontramos cupos activos para cruzar contra este docente (nombre no calza exacto con Tutor Calendario)'}>
-                      {d.totalRespuestas}/{d.cuposEsperados || '—'}
+                    <span title={d.cuposEsperados ? `Suma de cupos activos de los grupos de este docente (según Tutor Calendario)` : 'No encontramos cupos activos para cruzar contra este docente (nombre no calza exacto con Tutor Calendario)'}>
+                      {d.cuposEsperados || '—'}
                     </span>
                   </Td>
                   <Td right>
