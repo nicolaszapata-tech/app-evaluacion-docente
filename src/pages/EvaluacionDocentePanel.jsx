@@ -1576,11 +1576,22 @@ function construirRankingDocentes_(crudo) {
   }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 }
 
+/** "TODOS" (agregado histórico completo) + cada mes presente en crudo, en
+ *  orden de calendario -- 2026-09-04, a pedido del usuario: poder ver el
+ *  Ranking Docente de UN mes puntual, no solo el acumulado desde Agosto
+ *  ("hasta ahora está muy general"). Ordena por índice en MESES_ES, no
+ *  alfabético (para que Agosto salga antes que Septiembre). */
+function mesesDisponiblesRanking_(crudo) {
+  const set = new Set((crudo || []).map((g) => g.mes_calificacion).filter(Boolean));
+  return Array.from(set).sort((a, b) => MESES_ES.indexOf(a) - MESES_ES.indexOf(b));
+}
+
 function RankingDocente() {
   const [crudo, setCrudo] = useState(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [seleccionado, setSeleccionado] = useState(null);
+  const [mesSeleccionado, setMesSeleccionado] = useState('TODOS');
 
   useEffect(() => {
     let vivo = true;
@@ -1599,15 +1610,21 @@ function RankingDocente() {
     return () => { vivo = false; };
   }, []);
 
-  const docentes = useMemo(() => construirRankingDocentes_(crudo), [crudo]);
+  const mesesDisponibles = useMemo(() => mesesDisponiblesRanking_(crudo), [crudo]);
+  const crudoFiltrado = useMemo(
+    () => (mesSeleccionado === 'TODOS' ? crudo : (crudo || []).filter((g) => g.mes_calificacion === mesSeleccionado)),
+    [crudo, mesSeleccionado]
+  );
+
+  const docentes = useMemo(() => construirRankingDocentes_(crudoFiltrado), [crudoFiltrado]);
   const visibles = useMemo(() => docentes.filter((d) => d.confiabilidad !== 'oculto'), [docentes]);
   const ocultosCount = docentes.length - visibles.length;
   const promedioInstitucional = useMemo(() => {
-    const todas = (crudo || []).flatMap((g) => g.filas || []);
+    const todas = (crudoFiltrado || []).flatMap((g) => g.filas || []);
     const porPregunta = {};
     SECCION_DOCENTE.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(todas, [k]); });
     return porPregunta;
-  }, [crudo]);
+  }, [crudoFiltrado]);
 
   const docenteActivo = visibles.find((d) => d.nombre === seleccionado) || null;
   const estiloPanel = estiloPanelSeccion_(COLOR_SECCION_RANKING);
@@ -1622,8 +1639,33 @@ function RankingDocente() {
       <div className="rounded-md p-3 border" style={estiloPanel}>
         <p className="text-sm font-semibold mb-1" style={{ color: COLOR_SECCION_RANKING }}>Ranking Docente</p>
         <p className="text-xs text-slate-400">
-          Panel de acompañamiento, no una tabla de posiciones: cada docente se compara contra sí mismo y contra el promedio institucional, nunca contra sus compañeros. Datos desde Agosto 2026 (las respuestas que nosotros mismos recolectamos). Con menos de {N_MIN_DOCENTE_OCULTO} respuestas acumuladas un docente todavía no aparece acá{ocultosCount > 0 ? ` (${ocultosCount} en ese caso ahora mismo)` : ''}; entre {N_MIN_DOCENTE_OCULTO} y {N_MIN_DOCENTE_CONFIABLE} se marca "⚠ muestra en construcción".
+          Panel de acompañamiento, no una tabla de posiciones: cada docente se compara contra sí mismo y contra el promedio institucional, nunca contra sus compañeros. Datos desde Agosto 2026 (las respuestas que nosotros mismos recolectamos).{' '}
+          {mesSeleccionado === 'TODOS'
+            ? 'Mostrando el acumulado de todos los meses'
+            : `Mostrando solo ${mesSeleccionado}`} — con menos de {N_MIN_DOCENTE_OCULTO} respuestas (en ese recorte) un docente todavía no aparece acá{ocultosCount > 0 ? ` (${ocultosCount} en ese caso ahora mismo)` : ''}; entre {N_MIN_DOCENTE_OCULTO} y {N_MIN_DOCENTE_CONFIABLE} se marca "⚠ muestra en construcción".
         </p>
+      </div>
+
+      <div className="rounded-md p-3 border" style={estiloPanel}>
+        <p className="text-xs text-slate-400 mb-2">Mes que se está evaluando</p>
+        <div className="flex flex-wrap gap-2">
+          {['TODOS', ...mesesDisponibles].map((mes) => {
+            const color = mes === 'TODOS' ? COLOR_SECCION_RANKING : colorDeMes(mes);
+            const activo = mesSeleccionado === mes;
+            return (
+              <button
+                key={mes}
+                type="button"
+                onClick={() => setMesSeleccionado(mes)}
+                className="text-sm rounded-md px-3 py-1.5 border transition-colors flex items-center gap-1.5"
+                style={activo ? { backgroundColor: color + '26', borderColor: color, color } : { borderColor: '#2f3a4d', color: '#cbd5e1' }}
+              >
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                {mes === 'TODOS' ? 'Todos los meses' : mes}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="rounded-md border overflow-x-auto" style={estiloPanel}>
@@ -1674,13 +1716,15 @@ function RankingDocente() {
           docente={docenteActivo}
           promedioInstitucional={promedioInstitucional}
           enConstruccion={docenteActivo.confiabilidad === 'construccion'}
+          mesSeleccionado={mesSeleccionado}
         />
       )}
     </div>
   );
 }
 
-function FichaDocente({ docente, promedioInstitucional, enConstruccion }) {
+function FichaDocente({ docente, promedioInstitucional, enConstruccion, mesSeleccionado }) {
+  const etiquetaPeriodo = mesSeleccionado === 'TODOS' ? 'todos los meses acumulados' : mesSeleccionado;
   const dataPreguntas = useMemo(() => {
     const labels = SECCION_DOCENTE.keys.map((k) => ETIQUETA_CORTA[k] || k);
     const valoresDocente = SECCION_DOCENTE.keys.map((k) => docente.porPregunta[k]);
@@ -1754,7 +1798,7 @@ function FichaDocente({ docente, promedioInstitucional, enConstruccion }) {
       </div>
 
       <div className="bg-ink-800 border border-ink-600 rounded-md p-3">
-        <p className="text-xs text-slate-300 mb-2">Bloque Docente, pregunta por pregunta -- vs. promedio institucional del mismo período</p>
+        <p className="text-xs text-slate-300 mb-2">Bloque Docente, pregunta por pregunta -- vs. promedio institucional ({etiquetaPeriodo})</p>
         <PlotlyChart data={dataPreguntas} layout={layoutPreguntas} style={{ width: '100%', height: 300 }} />
       </div>
 
