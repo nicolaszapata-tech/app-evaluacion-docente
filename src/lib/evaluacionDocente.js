@@ -228,10 +228,14 @@ export async function fetchCrudoEvaluacionDocente() {
 
 /** Trae stats + crudo en una sola llamada al webhook (evita pedirlo dos
  *  veces cuando la vista de Estadísticas necesita ambos, como
- *  EvaluacionDocentePanel.jsx). */
+ *  EvaluacionDocentePanel.jsx). cuposDocente ({docente, mes_calificacion,
+ *  cupos_activos}, uno por combinación) se agregó 2026-09-07 para poder
+ *  mostrar en Ranking Docente cuántos estudiantes esperábamos que
+ *  respondieran (suma de cupos_activos de los grupos de ese docente en ese
+ *  mes) junto al total de respuestas reales. */
 export async function fetchStatsYCrudo() {
-  const { stats, crudo } = await llamarPanel_({ accion: 'stats' });
-  return { stats: stats || [], crudo: crudo || [] };
+  const { stats, crudo, cuposDocente } = await llamarPanel_({ accion: 'stats' });
+  return { stats: stats || [], crudo: crudo || [], cuposDocente: cuposDocente || [] };
 }
 
 /** Bloque histórico (Google Forms, sin cédula/correo/group_id -> no se

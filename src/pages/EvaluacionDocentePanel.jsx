@@ -1539,7 +1539,7 @@ const N_MIN_DOCENTE_CONFIABLE = 15;
  *  2026-09-01, ver "Calcular Stats" del workflow del panel) por docente,
  *  calculando lo que la ficha necesita. Excluye placeholders y filas sin
  *  nombre de docente. */
-function construirRankingDocentes_(crudo) {
+function construirRankingDocentes_(crudo, cuposEsperadosPorDocente) {
   const mapa = {};
   (crudo || []).forEach((grupo) => {
     (grupo.filas || []).forEach((f) => {
@@ -1562,18 +1562,38 @@ function construirRankingDocentes_(crudo) {
       ? Math.round(conComentario.reduce((s, f) => s + f.docente_comentarios.length, 0) / conComentario.length)
       : null;
     const confiabilidad = total < N_MIN_DOCENTE_OCULTO ? 'oculto' : total < N_MIN_DOCENTE_CONFIABLE ? 'construccion' : 'confiable';
+    const cuposEsperados = cuposEsperadosPorDocente?.[d.nombre] ?? null;
     return {
       nombre: d.nombre,
       areas: Array.from(d.areas).sort(),
       materias: Array.from(d.materias).sort(),
       filas: d.filas,
       totalRespuestas: total,
+      cuposEsperados,
       promedioDocente,
       porPregunta,
       comentarios: { conteo: conComentario.length, longitudPromedio },
       confiabilidad,
     };
   }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+/** Suma cupos_activos por docente para el recorte de mes actual (o para
+ *  todos los meses acumulados si mesSeleccionado === 'TODOS') -- 2026-09-07,
+ *  a pedido del usuario: "necesito que al lado de Respuestas aparezca la
+ *  cantidad de estudiantes que esperábamos que se respondiera, eso lo
+ *  sabemos con los cupos". cuposDocente viene del webhook ya agregado por
+ *  docente+mes (ver "Calcular Stats" del workflow del panel), cruzando por
+ *  nombre exacto contra tutor_calendario -- un docente cuyo nombre en las
+ *  respuestas no calce EXACTO con tutor_calendario (typo, variante) queda
+ *  sin match acá y se muestra como "—" en vez de un número engañoso. */
+function cuposEsperadosPorDocente_(cuposDocente, mesSeleccionado) {
+  const mapa = {};
+  (cuposDocente || []).forEach((c) => {
+    if (mesSeleccionado !== 'TODOS' && c.mes_calificacion !== mesSeleccionado) return;
+    mapa[c.docente] = (mapa[c.docente] || 0) + (c.cupos_activos || 0);
+  });
+  return mapa;
 }
 
 /** "TODOS" (agregado histórico completo) + cada mes presente en crudo, en
@@ -1588,6 +1608,7 @@ function mesesDisponiblesRanking_(crudo) {
 
 function RankingDocente() {
   const [crudo, setCrudo] = useState(null);
+  const [cuposDocente, setCuposDocente] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [seleccionado, setSeleccionado] = useState(null);
@@ -1599,8 +1620,8 @@ function RankingDocente() {
       setCargando(true);
       setError('');
       try {
-        const { crudo } = await fetchStatsYCrudo();
-        if (vivo) setCrudo(crudo);
+        const { crudo, cuposDocente } = await fetchStatsYCrudo();
+        if (vivo) { setCrudo(crudo); setCuposDocente(cuposDocente); }
       } catch (e) {
         if (vivo) setError(e.message || String(e));
       } finally {
@@ -1615,8 +1636,9 @@ function RankingDocente() {
     () => (mesSeleccionado === 'TODOS' ? crudo : (crudo || []).filter((g) => g.mes_calificacion === mesSeleccionado)),
     [crudo, mesSeleccionado]
   );
+  const cuposPorDocente = useMemo(() => cuposEsperadosPorDocente_(cuposDocente, mesSeleccionado), [cuposDocente, mesSeleccionado]);
 
-  const docentes = useMemo(() => construirRankingDocentes_(crudoFiltrado), [crudoFiltrado]);
+  const docentes = useMemo(() => construirRankingDocentes_(crudoFiltrado, cuposPorDocente), [crudoFiltrado, cuposPorDocente]);
   const visibles = useMemo(() => docentes.filter((d) => d.confiabilidad !== 'oculto'), [docentes]);
   const ocultosCount = docentes.length - visibles.length;
   const promedioInstitucional = useMemo(() => {
@@ -1674,7 +1696,7 @@ function RankingDocente() {
             <tr>
               <Th>Docente</Th>
               <Th>Área(s)</Th>
-              <Th right>Respuestas</Th>
+              <Th right>Respuestas / Esperadas</Th>
               <Th right>Promedio Docente</Th>
               <th className="py-1.5 pr-3"></th>
             </tr>
@@ -1694,7 +1716,11 @@ function RankingDocente() {
                 >
                   <Td>{d.nombre}</Td>
                   <Td>{d.areas.join(' · ') || '—'}</Td>
-                  <Td right>{d.totalRespuestas}</Td>
+                  <Td right>
+                    <span title={d.cuposEsperados ? `${d.totalRespuestas} respuesta(s) de ${d.cuposEsperados} estudiantes esperados (según cupos activos)` : 'No encontramos cupos activos para cruzar contra este docente (nombre no calza exacto con Tutor Calendario)'}>
+                      {d.totalRespuestas}/{d.cuposEsperados || '—'}
+                    </span>
+                  </Td>
                   <Td right>
                     <span className="inline-flex items-center gap-1 justify-end">
                       {comaDecimal_((d.promedioDocente ?? 0).toFixed(2))}
@@ -1788,7 +1814,10 @@ function FichaDocente({ docente, promedioInstitucional, enConstruccion, mesSelec
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <p className="text-sm font-semibold text-slate-100">{docente.nombre}</p>
-          <p className="text-xs text-slate-400">{docente.areas.join(' · ')} · {docente.totalRespuestas} respuesta(s)</p>
+          <p className="text-xs text-slate-400">
+            {docente.areas.join(' · ')} · {docente.totalRespuestas} respuesta(s)
+            {docente.cuposEsperados ? ` de ${docente.cuposEsperados} estudiante(s) esperado(s) (${Math.round((docente.totalRespuestas / docente.cuposEsperados) * 1000) / 10}%)` : ''}
+          </p>
         </div>
         {enConstruccion && (
           <span className="text-[11px] font-medium text-amber-300 bg-amber-950/40 border border-amber-800 rounded px-2 py-1">
