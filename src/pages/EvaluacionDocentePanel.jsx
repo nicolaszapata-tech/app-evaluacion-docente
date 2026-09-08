@@ -16,6 +16,8 @@ import {
   fetchMesesActivosMapa,
   fetchMesesDisponibles,
   fetchStatsYCrudo,
+  fetchUltimoSyncBaseGrupos,
+  formatearHaceTiempo,
   icWilson,
   matrizCorrelacion,
   MES_HISTORICO_ENERO_JULIO,
@@ -24,6 +26,7 @@ import {
   PREGUNTAS_LIKERT_KEYS,
   RESPUESTAS_SATISFACCION_2026_FIJO,
   resumenDeFilas,
+  sincronizarBaseGrupos,
   SATISFACCION_CONTENIDOS_2025_PROMEDIO,
   SATISFACCION_CONTENIDOS_2026_FIJO,
   SATISFACCION_DOCENTE_2025_PROMEDIO,
@@ -82,6 +85,8 @@ export default function EvaluacionDocentePanel() {
   const mostrarRailDerecho = vista === VISTAS.TABLA;
 
   return (
+    <>
+    <BarraSincronizacion />
     <div className={
       'grid grid-cols-1 gap-6 items-start ' +
       (mostrarRailDerecho ? 'lg:grid-cols-[180px_1fr_360px]' : 'lg:grid-cols-[180px_1fr]')
@@ -110,6 +115,96 @@ export default function EvaluacionDocentePanel() {
         {vista === VISTAS.RANKING && <RankingDocente />}
       </div>
     </div>
+    </>
+  );
+}
+
+/** Botón de sincronización manual (2026-09-08, a pedido del usuario: "no
+ *  tiene botones para actualizar o ejecutar los flujos... lo ideal es que
+ *  también hayan botones que permitan actualizar la información de
+ *  supabase"). Mismo patrón visual que PanelSincronizacion.jsx en
+ *  APP_GRUPOS_ACTIVOS -- acá solo hay UNA fuente que vale la pena refrescar
+ *  a demanda (doc_base_de_grupos, que normalmente espera hasta 3h por el
+ *  trigger automático de n8n); doc_respuestas_consolidada no necesita botón
+ *  porque los estudiantes escriben ahí directo, siempre está al día.
+ *  Visible en TODAS las vistas (no solo "Grupos"), arriba del layout. */
+function BarraSincronizacion() {
+  const [ultimoSync, setUltimoSync] = useState(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function recargarUltimoSync() {
+    try {
+      setUltimoSync(await fetchUltimoSyncBaseGrupos());
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }
+
+  useEffect(() => {
+    recargarUltimoSync();
+  }, []);
+
+  async function onClickSync() {
+    setError(null);
+    setSincronizando(true);
+    try {
+      await sincronizarBaseGrupos();
+      await recargarUltimoSync();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setSincronizando(false);
+    }
+  }
+
+  return (
+    <div className="mb-6 bg-ink-900 border border-ink-700 rounded-lg px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs font-medium text-slate-400 shrink-0">Sincronización manual</span>
+        <button
+          type="button"
+          disabled={sincronizando}
+          onClick={onClickSync}
+          className="flex items-center gap-2 rounded-md border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-slate-200 hover:bg-ink-700 hover:border-ink-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
+        >
+          {sincronizando ? <IconoSpinner /> : <IconoSync />}
+          <span>Actualizar datos de grupos</span>
+          <span className="text-slate-500">· {ultimoSync !== null ? formatearHaceTiempo(ultimoSync) : '…'}</span>
+        </button>
+      </div>
+      <p className="text-[11px] text-slate-500 mt-1.5">
+        Trae de nuevo la hoja "ENCUESTAS DE SATISFACCION" (Consolidado + Rutas, se actualiza sola cada 1h) a Supabase, en vez de esperar hasta 3h al trigger automático. Las respuestas de estudiantes ya se guardan al instante, no necesitan este botón.
+      </p>
+      {error && (
+        <div className="mt-2 text-xs text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-1.5">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IconoSync() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="w-3.5 h-3.5 shrink-0">
+      <path
+        d="M16 4v4h-4M4 16v-4h4M4.5 8a5.5 5.5 0 0 1 9.4-3.5L16 6M15.5 12a5.5 5.5 0 0 1-9.4 3.5L4 14"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconoSpinner() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" className="w-3.5 h-3.5 shrink-0 animate-spin">
+      <circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.4" strokeOpacity="0.25" />
+      <path d="M17 10a7 7 0 0 0-7-7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   );
 }
 

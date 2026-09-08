@@ -179,6 +179,53 @@ export async function togglearMesActivo(mes, activo) {
   return llamarPanel_({ accion: 'toggle_mes', mes, activo });
 }
 
+/** Botón "Actualizar datos de grupos" del panel (2026-09-08, a pedido del
+ *  usuario: "la app... no tiene botones para actualizar o ejecutar los
+ *  flujos de evaluación docente... lo ideal es que también hayan botones
+ *  que permitan actualizar la información de supabase"). Dispara bajo
+ *  demanda, vía el webhook del panel, el workflow de n8n que ya corre solo
+ *  cada 3h (EVALUACION DOCENTE — Sync doc_base_de_grupos → Supabase):
+ *  vuelve a leer la hoja "ENCUESTAS DE SATISFACCION" (Consolidado + Mapeo +
+ *  Rutas, ya se actualiza sola cada 1h en Sheets) y la vuelca en
+ *  doc_base_de_grupos, en vez de esperar hasta 3h al trigger automático.
+ *  doc_respuestas_consolidada (las respuestas de los estudiantes) NO
+ *  necesita este botón -- se insertan directo a Supabase al enviar el
+ *  formulario, siempre están al día. */
+export async function sincronizarBaseGrupos() {
+  return llamarPanel_({ accion: 'sync_base_grupos' });
+}
+
+/** Última vez que se sincronizó doc_base_de_grupos (columna actualizado_en,
+ *  ya la escribe el UPSERT del workflow) -- para mostrar "hace X" junto al
+ *  botón de sincronizarBaseGrupos(). Lectura pública directa (RLS SELECT),
+ *  igual que fetchGruposEvaluacionDocente. */
+export async function fetchUltimoSyncBaseGrupos() {
+  const { data, error } = await supabase
+    .from('doc_base_de_grupos')
+    .select('actualizado_en')
+    .order('actualizado_en', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return data?.[0]?.actualizado_en || null;
+}
+
+/** "hace 5 min" / "hace 2 h" / fecha completa si ya pasó más de una semana
+ *  -- mismo helper que ya usa APP_GRUPOS_ACTIVOS (lib/formato.js) para sus
+ *  3 botones de sincronización manual, portado acá para el mismo patrón. */
+export function formatearHaceTiempo(isoConHora) {
+  if (!isoConHora) return 'nunca';
+  const entonces = new Date(isoConHora);
+  const diffMs = Date.now() - entonces.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return 'justo ahora';
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `hace ${diffH} h`;
+  const diffD = Math.round(diffH / 24);
+  if (diffD < 7) return `hace ${diffD} d`;
+  return entonces.toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
 /** mes_calificacion -> estudiantes_activos (número o null si nunca se
  *  cargó). Único dato manual de la sección NPS de Estadísticas -- todo lo
  *  demás (respuestas, promotores/pasivos/detractores, NPS) se calcula solo
