@@ -48,7 +48,11 @@ export default function EvaluacionDocentePanel() {
     (async () => {
       try {
         const [mesesData, activosData] = await Promise.all([fetchMesesDisponibles(), fetchMesesActivosMapa()]);
-        setMeses(mesesData.sort());
+        // Orden CRONOLÓGICO (por índice en MESES_ES), no alfabético -- 2026-09-08,
+        // bug reportado por el usuario: con .sort() por defecto "Octubre" queda
+        // antes que "Septiembre" (O < S alfabéticamente). Mismo criterio que ya
+        // usa mesesDisponiblesRanking_ en Ranking Docente.
+        setMeses([...mesesData].sort((a, b) => MESES_ES.indexOf(a) - MESES_ES.indexOf(b)));
         setActivos(activosData);
       } catch (e) {
         setError(e.message || String(e));
