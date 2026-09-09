@@ -45,6 +45,12 @@ export default function EvaluacionDocentePanel() {
   const [activos, setActivos] = useState({});
   const [error, setError] = useState(null);
   const [cargando, setCargando] = useState(true);
+  // 2026-09-09, a pedido del usuario: "quiero que evaluacion docente tenga
+  // el boton de activar o desactivar los datos de modulo 0 asi como lo
+  // tenemos en la app de asistencia aprobacion" -- mismo criterio y mismo
+  // default (excluido) que esModulo0 de esa app. Global: afecta Grupos,
+  // Estadísticas y Ranking Docente a la vez.
+  const [incluirModulo0, setIncluirModulo0] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -86,9 +92,10 @@ export default function EvaluacionDocentePanel() {
   return (
     <>
     <BarraSincronizacion />
+    <BarraFiltrosGlobales incluirModulo0={incluirModulo0} onCambiarIncluirModulo0={setIncluirModulo0} />
     <div className={
       'grid grid-cols-1 gap-6 items-start ' +
-      (mostrarRailDerecho ? 'lg:grid-cols-[180px_1fr_360px]' : 'lg:grid-cols-[180px_1fr]')
+      (mostrarRailDerecho ? 'lg:grid-cols-[48px_1fr_360px]' : 'lg:grid-cols-[48px_1fr]')
     }>
       {/* Orden en pantallas angostas: Nav -> switches/links -> contenido
           principal (que puede ser una tabla larga) -- así los switches
@@ -109,12 +116,58 @@ export default function EvaluacionDocentePanel() {
         {error && (
           <div className="mb-4 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>
         )}
-        {vista === VISTAS.TABLA && <TablaGrupos meses={meses} activos={activos} />}
-        {vista === VISTAS.ESTADISTICAS && <Estadisticas meses={meses} />}
-        {vista === VISTAS.RANKING && <RankingDocente />}
+        {vista === VISTAS.TABLA && <TablaGrupos meses={meses} activos={activos} incluirModulo0={incluirModulo0} />}
+        {vista === VISTAS.ESTADISTICAS && <Estadisticas meses={meses} incluirModulo0={incluirModulo0} />}
+        {vista === VISTAS.RANKING && <RankingDocente incluirModulo0={incluirModulo0} />}
       </div>
     </div>
     </>
+  );
+}
+
+/** "Módulo 0" / "Módulo Cero" -- el módulo de inducción, no es una materia
+ *  calificada real (aprobación/participación siempre atípica). Mismo
+ *  criterio EXACTO (y mismo default: excluido) que ya usa
+ *  APP_ASISTENCIA_APROBACION (esModulo0 en lib/asistenciaAprobacion.js),
+ *  a pedido del usuario -- "asi como lo tenemos en la app de asistencia
+ *  aprobacion". */
+function esModulo0_(materia) {
+  const s = (materia || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+  return /^modulo\s*(0|cero)\b/.test(s);
+}
+
+/** Filtra Módulo 0 de un `crudo` (shape [{categoria_programa,
+ *  mes_calificacion, filas}], ver fetchStatsYCrudo) -- quita de cada
+ *  .filas las respuestas cuya .materia sea Módulo 0. Si incluirModulo0 es
+ *  true, o no hay crudo todavía, lo devuelve tal cual (sin copiar). */
+function filtrarCrudoModulo0_(crudo, incluirModulo0) {
+  if (incluirModulo0 || !crudo) return crudo;
+  return crudo.map((d) => ({ ...d, filas: (d.filas || []).filter((f) => !esModulo0_(f.materia)) }));
+}
+
+/** Barra de filtros globales (hoy solo Módulo 0, pero se deja el nombre
+ *  genérico por si se suman más) -- visible en TODAS las vistas, mismo
+ *  lugar/estilo que BarraSincronizacion. Reusa el componente Switch ya
+ *  existente en este archivo (el mismo que usa EvaluacionesActivas). */
+function BarraFiltrosGlobales({ incluirModulo0, onCambiarIncluirModulo0 }) {
+  return (
+    <div className="mb-6 bg-ink-900 border border-ink-700 rounded-lg px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs font-medium text-slate-400 shrink-0">Filtros globales</span>
+        <div className="flex items-center gap-2.5">
+          <Switch activo={incluirModulo0} onClick={() => onCambiarIncluirModulo0(!incluirModulo0)} />
+          <span className="text-sm text-slate-300">Incluir Módulo 0</span>
+        </div>
+      </div>
+      <p className="text-[11px] text-slate-500 mt-1.5">
+        El módulo de inducción no es una materia calificada real -- aplica a Grupos, Estadísticas y Ranking Docente. Mismo criterio que ya usa la app de Asistencia/Aprobación.
+      </p>
+    </div>
   );
 }
 
@@ -207,31 +260,70 @@ function IconoSpinner() {
   );
 }
 
+/** 2026-09-09, a pedido del usuario: "el panel izquierdo que sea como un
+ *  simbolo de hamburguesa que cuando pasas por el lado muestra el panel
+ *  pero si quitas el mouse desaparece, como en opera gx". En pantallas
+ *  angostas (sin hover real, dispositivos táctiles) se mantiene la fila
+ *  horizontal simple de siempre, sin nada de esto -- el hover-rail es
+ *  SOLO para lg+ (desktop). En desktop: un rail angosto (solo íconos)
+ *  siempre visible reserva el espacio real en el layout; al pasar el mouse
+ *  por encima aparece un panel FLOTANTE (position:absolute, no empuja el
+ *  contenido) con íconos + etiquetas, superpuesto sobre lo que haya al
+ *  lado -- exactamente el comportamiento del sidebar de Opera GX. */
 function NavLateral({ vista, onCambiarVista }) {
+  const [expandido, setExpandido] = useState(false);
   const items = [
     { id: VISTAS.TABLA, label: 'Grupos', icono: '☰' },
     { id: VISTAS.ESTADISTICAS, label: 'Estadísticas', icono: '📊' },
     { id: VISTAS.RANKING, label: 'Ranking Docente', icono: '🏅' },
   ];
+
+  function boton(item, compacto) {
+    const activo = vista === item.id;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        onClick={() => onCambiarVista(item.id)}
+        title={compacto ? item.label : undefined}
+        className={
+          'flex items-center gap-2 text-sm rounded-md transition-colors border ' +
+          (compacto ? 'justify-center w-10 h-10 shrink-0' : 'px-3 py-2 text-left') +
+          ' ' +
+          (activo
+            ? 'bg-accent-500/15 border-accent-500 text-accent-300'
+            : 'bg-ink-900 border-ink-700 text-slate-300 hover:bg-ink-800')
+        }
+      >
+        <span>{item.icono}</span>
+        {!compacto && <span>{item.label}</span>}
+      </button>
+    );
+  }
+
   return (
-    <nav className="flex lg:flex-col gap-2">
-      {items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          onClick={() => onCambiarVista(item.id)}
+    <>
+      {/* Móvil/tablet: fila horizontal de siempre, sin hover (no aplica en táctil). */}
+      <nav className="flex lg:hidden gap-2">{items.map((item) => boton(item, false))}</nav>
+
+      {/* Desktop: rail angosto + panel flotante al hacer hover. */}
+      <div
+        className="hidden lg:block relative"
+        onMouseEnter={() => setExpandido(true)}
+        onMouseLeave={() => setExpandido(false)}
+      >
+        <nav className="flex flex-col gap-2 w-10">{items.map((item) => boton(item, true))}</nav>
+
+        <nav
           className={
-            'flex items-center gap-2 text-sm rounded-md px-3 py-2 text-left transition-colors border ' +
-            (vista === item.id
-              ? 'bg-accent-500/15 border-accent-500 text-accent-300'
-              : 'bg-ink-900 border-ink-700 text-slate-300 hover:bg-ink-800')
+            'absolute top-0 left-0 z-30 flex flex-col gap-2 w-52 bg-ink-950 border border-ink-700 rounded-lg p-2 shadow-2xl transition-all duration-150 ease-out ' +
+            (expandido ? 'opacity-100 translate-x-0 pointer-events-auto' : 'opacity-0 -translate-x-1 pointer-events-none')
           }
         >
-          <span>{item.icono}</span>
-          <span>{item.label}</span>
-        </button>
-      ))}
-    </nav>
+          {items.map((item) => boton(item, false))}
+        </nav>
+      </div>
+    </>
   );
 }
 
@@ -288,7 +380,7 @@ function coincideBusquedaGrupos_(texto, consulta) {
   return q.split(/\s+/).every((tok) => base.includes(tok));
 }
 
-function TablaGrupos({ meses, activos }) {
+function TablaGrupos({ meses, activos, incluirModulo0 }) {
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
@@ -321,8 +413,13 @@ function TablaGrupos({ meses, activos }) {
   const toggleCategoria = (c) => toggleEnSet(categoriasAbiertas, setCategoriasAbiertas, c);
 
   const filasFiltradas = useMemo(
-    () => filas.filter((f) => !mesesElegidos.size || mesesElegidos.has(f.mes_calificacion)),
-    [filas, mesesElegidos]
+    () =>
+      filas.filter(
+        (f) =>
+          (!mesesElegidos.size || mesesElegidos.has(f.mes_calificacion)) &&
+          (incluirModulo0 || !esModulo0_(f.materia))
+      ),
+    [filas, mesesElegidos, incluirModulo0]
   );
 
   const porCategoria = useMemo(() => {
@@ -744,7 +841,7 @@ function estiloPanelSeccion_(color) {
  *  de variables, no una sola). */
 const N_MINIMO_CORRELACION = 10;
 
-function Estadisticas({ meses }) {
+function Estadisticas({ meses, incluirModulo0 }) {
   const [crudo, setCrudo] = useState(null);
   const [crudoHistorico, setCrudoHistorico] = useState(null);
   const [stats, setStats] = useState(null);
@@ -830,9 +927,15 @@ function Estadisticas({ meses }) {
     });
   }
 
+  // 2026-09-09: filtra Módulo 0 (si el switch global lo excluye) antes de
+  // que cualquier cuenta/promedio/gráfico lo vea -- un solo punto, así no
+  // hay que tocar cada helper que ya consume `crudo`/`crudoHistorico`.
+  const crudoFiltrado = useMemo(() => filtrarCrudoModulo0_(crudo, incluirModulo0), [crudo, incluirModulo0]);
+  const crudoHistoricoFiltrado = useMemo(() => filtrarCrudoModulo0_(crudoHistorico, incluirModulo0), [crudoHistorico, incluirModulo0]);
+
   const porCategoria = esHistorico
-    ? (crudoHistorico || [])
-    : (crudo || []).filter((d) => d.mes_calificacion === mesElegido);
+    ? (crudoHistoricoFiltrado || [])
+    : (crudoFiltrado || []).filter((d) => d.mes_calificacion === mesElegido);
   const filasGlobal = porCategoria.flatMap((d) => d.filas);
   const global = { categoria_programa: 'Todas', resumen: resumenDeFilas(filasGlobal) };
   const seriesActivas = porCategoria.filter((d) => categoriasActivas.has(d.categoria_programa));
@@ -861,9 +964,9 @@ function Estadisticas({ meses }) {
 
       {!cargando && (
         <>
-          <NpsComparativo2025vs2026 crudo={crudo} />
+          <NpsComparativo2025vs2026 crudo={crudoFiltrado} />
           <TablaNpsMensual2026
-            crudo={crudo}
+            crudo={crudoFiltrado}
             estudiantesActivosMapa={estudiantesActivosMapa}
             mesSincronizando={mesSincronizando}
             onSincronizarEstudiantesActivos={sincronizarEstudiantesActivos}
@@ -874,7 +977,7 @@ function Estadisticas({ meses }) {
             seccion={SECCION_DOCENTE}
             promedios2025={SATISFACCION_DOCENTE_2025_PROMEDIO}
             datosFijo2026={SATISFACCION_DOCENTE_2026_FIJO}
-            crudo={crudo}
+            crudo={crudoFiltrado}
             estudiantesActivosMapa={estudiantesActivosMapa}
           />
           <SeccionSatisfaccion
@@ -882,7 +985,7 @@ function Estadisticas({ meses }) {
             seccion={SECCION_CONTENIDOS}
             promedios2025={SATISFACCION_CONTENIDOS_2025_PROMEDIO}
             datosFijo2026={SATISFACCION_CONTENIDOS_2026_FIJO}
-            crudo={crudo}
+            crudo={crudoFiltrado}
             estudiantesActivosMapa={estudiantesActivosMapa}
           />
           <SeccionSatisfaccion
@@ -890,7 +993,7 @@ function Estadisticas({ meses }) {
             seccion={SECCION_PLATAFORMA}
             promedios2025={SATISFACCION_PLATAFORMA_2025_PROMEDIO}
             datosFijo2026={SATISFACCION_PLATAFORMA_2026_FIJO}
-            crudo={crudo}
+            crudo={crudoFiltrado}
             estudiantesActivosMapa={estudiantesActivosMapa}
           />
 
@@ -1929,7 +2032,7 @@ function mesesDisponiblesRanking_(crudo) {
   return Array.from(set).sort((a, b) => MESES_ES.indexOf(a) - MESES_ES.indexOf(b));
 }
 
-function RankingDocente() {
+function RankingDocente({ incluirModulo0 }) {
   const [crudo, setCrudo] = useState(null);
   const [cuposDocente, setCuposDocente] = useState([]);
   const [cargando, setCargando] = useState(true);
@@ -1955,10 +2058,13 @@ function RankingDocente() {
   }, []);
 
   const mesesDisponibles = useMemo(() => mesesDisponiblesRanking_(crudo), [crudo]);
-  const crudoFiltrado = useMemo(
-    () => (mesSeleccionado === 'TODOS' ? crudo : (crudo || []).filter((g) => g.mes_calificacion === mesSeleccionado)),
-    [crudo, mesSeleccionado]
-  );
+  // 2026-09-09: mismo filtro global de Módulo 0 que Grupos/Estadísticas,
+  // aplicado en el mismo paso que ya filtraba por mes (ver
+  // filtrarCrudoModulo0_ más arriba en el archivo).
+  const crudoFiltrado = useMemo(() => {
+    const porMes = mesSeleccionado === 'TODOS' ? crudo : (crudo || []).filter((g) => g.mes_calificacion === mesSeleccionado);
+    return filtrarCrudoModulo0_(porMes, incluirModulo0);
+  }, [crudo, mesSeleccionado, incluirModulo0]);
   const cuposPorDocente = useMemo(() => cuposEsperadosPorDocente_(cuposDocente, mesSeleccionado), [cuposDocente, mesSeleccionado]);
 
   const docentes = useMemo(() => construirRankingDocentes_(crudoFiltrado, cuposPorDocente), [crudoFiltrado, cuposPorDocente]);
