@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import Combobox from '../components/Combobox.jsx';
 import PlotlyChart from '../components/PlotlyChart.jsx';
 import { normalizar } from '../lib/normalizar.js';
 import {
@@ -236,15 +235,67 @@ function NavLateral({ vista, onCambiarVista }) {
   );
 }
 
+/* ============================================================================
+ *  Tabla de Grupos — 2026-09-09, a pedido del usuario: "una tabla un poco
+ *  mas similar como la de la app de asistencia separadas y con acordeones
+ *  para sintetizar la informacion tanto en las columnas como lo demas".
+ *  Mismo patrón que AsistenciaAprobacionPanel.jsx (SeccionesCarrera /
+ *  TablaCarrera / GRUPOS_COL de esa app): una tabla POR categoría de
+ *  programa, cada una colapsable desde su propio header de color; dentro de
+ *  cada tabla, las columnas se agrupan por tema en "acordeones de columnas"
+ *  (chip arriba + header clickeable) que se pliegan a una sola columna "···"
+ *  cuando no interesan. Colores de columnas reusan la misma paleta que ya
+ *  usa esa app (#94a3b8/#a78bfa/#38bdf8/#34d399) a propósito, para que se
+ *  sienta como el mismo lenguaje visual entre apps hermanas.
+ * ==========================================================================*/
+
+const COLDEF_GRUPOS = {
+  id_grupo_mapeo: { t: 'ID Grupo (Mapeo)' },
+  materia: { t: 'Materia', wide: true },
+  mes_calificacion: { t: 'Mes', center: true },
+  horario: { t: 'Horario', center: true },
+  fecha_calendario_inicio: { t: 'Inicio', center: true, fmt: formatearFechaDDMMYYYY },
+  fecha_calendario_fin: { t: 'Fin', center: true, fmt: formatearFechaDDMMYYYY },
+  group_id: { t: 'Group ID', mono: true },
+  section_id: { t: 'Section ID', mono: true },
+  tutor_calendario: { t: 'Tutor Calendario', wide: true },
+  cupos_activos: { t: 'Cupos Activos', center: true },
+};
+
+const GRUPOS_COL_DEF = [
+  { id: 'ident', label: 'Identificación', color: '#94a3b8', cols: ['id_grupo_mapeo', 'materia', 'mes_calificacion'] },
+  { id: 'acad', label: 'Detalle académico', color: '#a78bfa', cols: ['horario', 'fecha_calendario_inicio', 'fecha_calendario_fin', 'group_id', 'section_id'] },
+  { id: 'docente', label: 'Docente', color: '#38bdf8', cols: ['tutor_calendario'] },
+  { id: 'cupos', label: 'Cupos', color: '#34d399', cols: ['cupos_activos'] },
+];
+
+const GRUPOS_COL_ABIERTOS_INICIAL = new Set(['ident', 'docente', 'cupos']); // "acad" arranca plegado (es la más ancha)
+
+function celdaGrupo_(f, key) {
+  const def = COLDEF_GRUPOS[key];
+  const v = f[key];
+  if (v == null || v === '') return '—';
+  return def.fmt ? def.fmt(v) : String(v);
+}
+
+/** true si cada palabra de la consulta aparece (como subcadena) en el texto
+ *  normalizado -- permite "mate fin" -> "Matemática Financiera". Mismo
+ *  criterio que coincideBusqueda() de AsistenciaAprobacionPanel.jsx. */
+function coincideBusquedaGrupos_(texto, consulta) {
+  const q = normalizar(consulta);
+  if (!q) return true;
+  const base = normalizar(texto || '');
+  return q.split(/\s+/).every((tok) => base.includes(tok));
+}
+
 function TablaGrupos({ meses, activos }) {
   const [filas, setFilas] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
   const [mesesElegidos, setMesesElegidos] = useState(() => new Set(meses.filter((m) => activos[m])));
-  const [categoriasElegidas, setCategoriasElegidas] = useState(() => new Set(CATEGORIAS_EVALUACION_DOCENTE));
-  const [materiaTexto, setMateriaTexto] = useState('');
-  const [tutorTexto, setTutorTexto] = useState('');
+  const [gruposCol, setGruposCol] = useState(GRUPOS_COL_ABIERTOS_INICIAL);
+  const [categoriasAbiertas, setCategoriasAbiertas] = useState(() => new Set(CATEGORIAS_EVALUACION_DOCENTE));
 
   useEffect(() => {
     (async () => {
@@ -266,34 +317,29 @@ function TablaGrupos({ meses, activos }) {
       return next;
     });
   }
+  const toggleGrupoCol = (id) => toggleEnSet(gruposCol, setGruposCol, id);
+  const toggleCategoria = (c) => toggleEnSet(categoriasAbiertas, setCategoriasAbiertas, c);
 
-  const materias = useMemo(
-    () => Array.from(new Set(filas.map((f) => f.materia).filter(Boolean))).sort(),
-    [filas]
-  );
-  const tutores = useMemo(
-    () => Array.from(new Set(filas.map((f) => f.tutor_calendario).filter(Boolean))).sort(),
-    [filas]
+  const filasFiltradas = useMemo(
+    () => filas.filter((f) => !mesesElegidos.size || mesesElegidos.has(f.mes_calificacion)),
+    [filas, mesesElegidos]
   );
 
-  const materiaQ = normalizar(materiaTexto);
-  const tutorQ = normalizar(tutorTexto);
-  const filasFiltradas = filas.filter((f) => {
-    if (mesesElegidos.size && !mesesElegidos.has(f.mes_calificacion)) return false;
-    if (categoriasElegidas.size && !categoriasElegidas.has(f.categoria_programa)) return false;
-    if (materiaQ && !normalizar(f.materia).includes(materiaQ)) return false;
-    if (tutorQ && !normalizar(f.tutor_calendario).includes(tutorQ)) return false;
-    return true;
-  });
+  const porCategoria = useMemo(() => {
+    const m = {};
+    CATEGORIAS_EVALUACION_DOCENTE.forEach((c) => (m[c] = []));
+    filasFiltradas.forEach((f) => (m[f.categoria_programa] || (m[f.categoria_programa] = [])).push(f));
+    return m;
+  }, [filasFiltradas]);
 
   return (
-    <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-4">
-      <div>
-        <h2 className="text-sm font-semibold text-slate-100">Grupos con evaluación docente</h2>
-        <p className="text-xs text-slate-400 mt-0.5">{filasFiltradas.length} de {filas.length} grupo(s)</p>
-      </div>
+    <section className="space-y-4">
+      <div className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-100">Grupos con evaluación docente</h2>
+          <p className="text-xs text-slate-400 mt-0.5">{filasFiltradas.length} de {filas.length} grupo(s)</p>
+        </div>
 
-      <div className="grid sm:grid-cols-2 gap-4">
         <div>
           <p className="text-xs text-slate-400 mb-1.5">Mes de calificación</p>
           <div className="flex flex-wrap gap-1.5">
@@ -310,29 +356,29 @@ function TablaGrupos({ meses, activos }) {
           </div>
         </div>
 
-        <div>
-          <p className="text-xs text-slate-400 mb-1.5">Categoría de programa</p>
-          <div className="flex flex-wrap gap-1.5">
-            {CATEGORIAS_EVALUACION_DOCENTE.map((categoria) => (
-              <ChipFiltro
-                key={categoria}
-                activo={categoriasElegidas.has(categoria)}
-                onClick={() => toggleEnSet(categoriasElegidas, setCategoriasElegidas, categoria)}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <span className="text-[11px] uppercase tracking-wider text-slate-500 mr-1">Columnas:</span>
+          {GRUPOS_COL_DEF.map((g) => {
+            const abierto = gruposCol.has(g.id);
+            return (
+              <button
+                key={g.id}
+                type="button"
+                onClick={() => toggleGrupoCol(g.id)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold tracking-wide transition-all border"
+                style={{
+                  color: abierto ? g.color : g.color + 'B3',
+                  backgroundColor: abierto ? g.color + '29' : 'transparent',
+                  borderColor: g.color + (abierto ? '80' : '4D'),
+                }}
+                title={abierto ? 'Plegar columnas' : 'Desplegar columnas'}
               >
-                {categoria}
-              </ChipFiltro>
-            ))}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-xs text-slate-400 mb-1.5">Materia</p>
-          <Combobox value={materiaTexto} onChange={setMateriaTexto} options={materias} placeholder="Escribir o elegir materia" />
-        </div>
-
-        <div>
-          <p className="text-xs text-slate-400 mb-1.5">Tutor</p>
-          <Combobox value={tutorTexto} onChange={setTutorTexto} options={tutores} placeholder="Escribir o elegir tutor" />
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: g.color, opacity: abierto ? 1 : 0.4 }} />
+                {g.label}
+                <span className="opacity-60 font-normal">{abierto ? '−' : `+${g.cols.length}`}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -340,49 +386,227 @@ function TablaGrupos({ meses, activos }) {
       {cargando ? (
         <p className="text-xs text-slate-400">Cargando…</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs whitespace-nowrap">
-            <thead className="text-slate-400">
-              <tr>
-                <Th>ID Grupo (Mapeo)</Th>
-                <Th>Mes de calificación</Th>
-                <Th>Group ID</Th>
-                <Th>Section ID</Th>
-                <Th>categoria_programa</Th>
-                <Th>Materia</Th>
-                <Th>Horario</Th>
-                <Th>Fecha calendario Inicio</Th>
-                <Th>Fecha calendario Fin</Th>
-                <Th>Tutor Calendario</Th>
-                <Th right>Cupos Activos</Th>
-              </tr>
-            </thead>
-            <tbody className="text-slate-200">
-              {filasFiltradas.map((f) => (
-                <tr key={f.group_id} className="border-t border-ink-700 hover:bg-ink-800/60">
-                  <Td>{f.id_grupo_mapeo}</Td>
-                  <Td>
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(f.mes_calificacion) }} />
-                      {f.mes_calificacion}
-                    </span>
-                  </Td>
-                  <Td>{f.group_id}</Td>
-                  <Td>{f.section_id}</Td>
-                  <Td>{f.categoria_programa}</Td>
-                  <Td>{f.materia}</Td>
-                  <Td>{f.horario}</Td>
-                  <Td>{formatearFechaDDMMYYYY(f.fecha_calendario_inicio)}</Td>
-                  <Td>{formatearFechaDDMMYYYY(f.fecha_calendario_fin)}</Td>
-                  <Td>{f.tutor_calendario}</Td>
-                  <Td right>{f.cupos_activos ?? '—'}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-4">
+          {CATEGORIAS_EVALUACION_DOCENTE.map((categoria) => (
+            <TablaCategoriaGrupos
+              key={categoria}
+              categoria={categoria}
+              grupos={porCategoria[categoria] || []}
+              abierta={categoriasAbiertas.has(categoria)}
+              onToggle={() => toggleCategoria(categoria)}
+              gruposCol={gruposCol}
+              onToggleGrupoCol={toggleGrupoCol}
+            />
+          ))}
         </div>
       )}
     </section>
+  );
+}
+
+function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol }) {
+  const color = COLOR_CATEGORIA[categoria] || '#5b7fff';
+  const [fMateria, setFMateria] = useState('');
+  const [fTutor, setFTutor] = useState('');
+
+  const gruposFiltrados = useMemo(
+    () => grupos.filter((g) => coincideBusquedaGrupos_(g.materia, fMateria) && coincideBusquedaGrupos_(g.tutor_calendario, fTutor)),
+    [grupos, fMateria, fTutor]
+  );
+  const filtrando = !!(fMateria || fTutor);
+  const cuposTotales = useMemo(
+    () => gruposFiltrados.reduce((a, g) => a + (Number(g.cupos_activos) || 0), 0),
+    [gruposFiltrados]
+  );
+  const totalCols = GRUPOS_COL_DEF.reduce((acc, g) => acc + (gruposCol.has(g.id) ? g.cols.length : 1), 0);
+
+  return (
+    <section className="rounded-2xl overflow-hidden border" style={{ borderColor: color + '59' }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-5 py-3.5 border-l-4 transition-colors"
+        style={{ borderColor: color, backgroundColor: color + '1F' }}
+      >
+        <span className={'text-lg leading-none transition-transform ' + (abierta ? 'rotate-90' : '')} style={{ color }}>▸</span>
+        <span className="text-base font-extrabold uppercase tracking-[0.14em]" style={{ color }}>{categoria}</span>
+        <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ color, backgroundColor: color + '2E' }}>
+          {filtrando ? `${gruposFiltrados.length} de ${grupos.length}` : `${grupos.length} grupos`}
+        </span>
+        <span className="ml-auto text-xs text-slate-400">
+          <span className="text-slate-500">Cupos activos </span>
+          <span className="font-semibold text-slate-200">{cuposTotales}</span>
+        </span>
+      </button>
+
+      {abierta && (
+        <>
+          <div className="flex flex-wrap items-center gap-3 px-5 py-2.5 border-t border-ink-800 bg-ink-900">
+            <FiltroTextoGrupos label="Materia" valor={fMateria} onChange={setFMateria} color={color} />
+            <FiltroTextoGrupos label="Tutor" valor={fTutor} onChange={setFTutor} color={color} />
+            {filtrando && (
+              <button
+                type="button"
+                onClick={() => { setFMateria(''); setFTutor(''); }}
+                className="text-[11px] text-slate-400 hover:text-slate-100 border border-ink-600 rounded-md px-2 py-1 hover:bg-ink-800"
+              >
+                limpiar filtros
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-x-auto bg-ink-900">
+            <table className="w-full text-xs border-collapse whitespace-nowrap">
+              <TheadGruposCategoria gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
+              <tbody>
+                {gruposFiltrados.length === 0 ? (
+                  <tr>
+                    <td colSpan={totalCols} className="px-5 py-6 text-slate-500">
+                      {grupos.length === 0 ? 'Sin grupos en esta categoría.' : 'Ningún grupo coincide con el filtro.'}
+                    </td>
+                  </tr>
+                ) : (
+                  gruposFiltrados.map((f) => (
+                    <FilaGrupoCategoria key={f.group_id} f={f} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Input de filtro de texto libre (sin desplegable): filtra a medida que se
+ *  escribe. Mismo componente que FiltroTabla de AsistenciaAprobacionPanel.jsx,
+ *  renombrado acá para no chocar si algún día se comparte un lib de UI. */
+function FiltroTextoGrupos({ label, valor, onChange, color }) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs">
+      <span className="text-slate-500">{label}</span>
+      <span className="relative">
+        <input
+          type="text"
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="escribe para filtrar…"
+          className="w-52 bg-ink-800 border border-ink-600 rounded-md pl-2.5 pr-6 py-1 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1"
+          style={{ '--tw-ring-color': color }}
+        />
+        {valor && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-100 hover:bg-ink-700"
+          >
+            ×
+          </button>
+        )}
+      </span>
+    </label>
+  );
+}
+
+function TheadGruposCategoria({ gruposCol, onToggleGrupoCol }) {
+  return (
+    <thead>
+      {/* Fila 1 — headers de los acordeones de columnas, cada uno con su color */}
+      <tr>
+        {GRUPOS_COL_DEF.map((g) => {
+          const abierto = gruposCol.has(g.id);
+          return (
+            <th
+              key={g.id}
+              colSpan={abierto ? g.cols.length : 1}
+              className="px-3 py-2 text-left align-bottom border-b-2"
+              style={{ backgroundColor: g.color + (abierto ? '24' : '12'), borderColor: g.color }}
+            >
+              <button
+                type="button"
+                onClick={() => onToggleGrupoCol(g.id)}
+                className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.12em] whitespace-nowrap transition-opacity hover:opacity-80"
+                style={{ color: g.color }}
+                title={abierto ? 'Plegar' : 'Desplegar'}
+              >
+                <span className={'transition-transform ' + (abierto ? 'rotate-90' : '')}>▸</span>
+                {g.label}
+                {!abierto && <span className="font-medium normal-case opacity-70">({g.cols.length})</span>}
+              </button>
+            </th>
+          );
+        })}
+      </tr>
+      {/* Fila 2 — nombres de columna (solo grupos abiertos) */}
+      <tr className="bg-ink-850">
+        {GRUPOS_COL_DEF.map((g) => {
+          const abierto = gruposCol.has(g.id);
+          if (!abierto) {
+            return <th key={g.id} className="border-b border-ink-700" style={{ borderLeft: `2px solid ${g.color}66` }} />;
+          }
+          return g.cols.map((key, j) => {
+            const def = COLDEF_GRUPOS[key];
+            return (
+              <th
+                key={key}
+                className={
+                  'px-3 py-2 font-semibold text-[11px] uppercase tracking-wider text-slate-400 whitespace-nowrap border-b border-ink-700 ' +
+                  (def.center ? 'text-center ' : 'text-left ') +
+                  (def.wide ? 'min-w-[190px] ' : '')
+                }
+                style={j === 0 ? { borderLeft: `2px solid ${g.color}66` } : undefined}
+              >
+                {def.t}
+              </th>
+            );
+          });
+        })}
+      </tr>
+    </thead>
+  );
+}
+
+function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol }) {
+  return (
+    <tr className="border-t border-ink-800 hover:bg-ink-850/50">
+      {GRUPOS_COL_DEF.map((g) => {
+        const abierto = gruposCol.has(g.id);
+        if (!abierto) {
+          return (
+            <td
+              key={g.id}
+              onClick={() => onToggleGrupoCol(g.id)}
+              className="px-2 py-2 text-center text-slate-600 cursor-pointer hover:text-slate-300"
+              style={{ borderLeft: `2px solid ${g.color}66`, backgroundColor: g.color + '0A' }}
+              title={'Desplegar ' + g.label}
+            >
+              ···
+            </td>
+          );
+        }
+        return g.cols.map((key, j) => {
+          const def = COLDEF_GRUPOS[key];
+          const style = j === 0 ? { borderLeft: `2px solid ${g.color}4D` } : {};
+          return (
+            <td
+              key={key}
+              className={'px-3 py-2 ' + (def.center ? 'text-center ' : '') + (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ')}
+              style={style}
+            >
+              {key === 'mes_calificacion' ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(f.mes_calificacion) }} />
+                  {f.mes_calificacion}
+                </span>
+              ) : (
+                celdaGrupo_(f, key)
+              )}
+            </td>
+          );
+        });
+      })}
+    </tr>
   );
 }
 
