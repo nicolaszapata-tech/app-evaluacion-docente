@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import PlotlyChart from '../components/PlotlyChart.jsx';
 import { normalizar } from '../lib/normalizar.js';
 import {
@@ -11,6 +12,9 @@ import {
   fetchCrudoHistoricoEneroJulio,
   fetchEstudiantesActivosMapa,
   fetchGruposEvaluacionDocente,
+  fetchGruposCombinadosEvalDocente,
+  fetchDirectorioTutores,
+  indexarDirectorioPorNombre,
   formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
   fetchMesesDisponibles,
@@ -352,14 +356,28 @@ const COLDEF_GRUPOS = {
   section_id: { t: 'Section ID', mono: true },
   tutor_calendario: { t: 'Tutor Calendario', wide: true },
   cupos_activos: { t: 'Cupos Activos', center: true },
+  respuestas: { t: 'Respuestas', center: true },
 };
 
 const GRUPOS_COL_DEF = [
   { id: 'ident', label: 'Identificación', color: '#94a3b8', cols: ['id_grupo_mapeo', 'materia', 'mes_calificacion'] },
   { id: 'acad', label: 'Detalle académico', color: '#a78bfa', cols: ['horario', 'fecha_calendario_inicio', 'fecha_calendario_fin', 'group_id', 'section_id'] },
   { id: 'docente', label: 'Docente', color: '#38bdf8', cols: ['tutor_calendario'] },
-  { id: 'cupos', label: 'Cupos', color: '#34d399', cols: ['cupos_activos'] },
+  { id: 'cupos', label: 'Cupos y respuestas', color: '#34d399', cols: ['cupos_activos', 'respuestas'] },
 ];
+
+/** Clave para cruzar un grupo de `doc_base_de_grupos` con el conteo de
+ *  respuestas de `doc_respuestas_consolidada` -- 2026-09-10, a pedido del
+ *  usuario: "al lado derecho de cupos ... cuantas respuestas tenemos de esa
+ *  materia segun las bases de datos". Se cruza por (categoria_programa +
+ *  mes_calificacion + materia) normalizado (sin tildes, minúsculas, espacios
+ *  colapsados) -- así Septiembre matchea 100% (387/387). En meses viejos
+ *  (Agosto) el nombre de la materia en las respuestas quedó distinto del que
+ *  hoy tiene la base, así que ahí puede quedar corto -- es deriva de datos
+ *  histórica, no un bug del cruce. */
+function claveRespuestas_(categoria, mes, materia) {
+  return normalizar(categoria) + '|' + normalizar(mes) + '|' + normalizar(materia);
+}
 
 const GRUPOS_COL_ABIERTOS_INICIAL = new Set(['ident', 'docente', 'cupos']); // "acad" arranca plegado (es la más ancha)
 
@@ -381,7 +399,10 @@ function coincideBusquedaGrupos_(texto, consulta) {
 }
 
 function TablaGrupos({ meses, activos, incluirModulo0 }) {
-  const [filas, setFilas] = useState([]);
+  const [filasRaw, setFilasRaw] = useState([]);
+  const [crudo, setCrudo] = useState([]); // respuestas crudas, para contar por materia
+  const [combos, setCombos] = useState([]);
+  const [dirIdx, setDirIdx] = useState(null); // índice del directorio de docentes (tooltip de contacto)
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
@@ -392,7 +413,16 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   useEffect(() => {
     (async () => {
       try {
-        setFilas(await fetchGruposEvaluacionDocente());
+        const [g, c, dir, sc] = await Promise.all([
+          fetchGruposEvaluacionDocente(),
+          fetchGruposCombinadosEvalDocente().catch(() => []),
+          fetchDirectorioTutores().catch(() => []),
+          fetchStatsYCrudo().then((r) => r.crudo || []).catch(() => []),
+        ]);
+        setFilasRaw(g);
+        setCombos(c);
+        setDirIdx(indexarDirectorioPorNombre(dir));
+        setCrudo(sc);
       } catch (e) {
         setError(e.message || String(e));
       } finally {
@@ -400,6 +430,29 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       }
     })();
   }, []);
+
+  // conteo de respuestas por (categoria + mes + materia) normalizado.
+  const mapaRespuestas = useMemo(() => {
+    const m = {};
+    (crudo || []).forEach((grupo) => {
+      (grupo.filas || []).forEach((fila) => {
+        const k = claveRespuestas_(grupo.categoria_programa, grupo.mes_calificacion, fila.materia);
+        m[k] = (m[k] || 0) + 1;
+      });
+    });
+    return m;
+  }, [crudo]);
+
+  // cada grupo lleva pegado su `respuestas` (nº de evaluaciones de esa
+  // materia en su misma categoría+mes); 0 si todavía no hay ninguna.
+  const filas = useMemo(
+    () =>
+      filasRaw.map((f) => ({
+        ...f,
+        respuestas: mapaRespuestas[claveRespuestas_(f.categoria_programa, f.mes_calificacion, f.materia)] || 0,
+      })),
+    [filasRaw, mapaRespuestas]
+  );
 
   function toggleEnSet(set, setSet, valor) {
     setSet((prev) => {
@@ -411,6 +464,12 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   }
   const toggleGrupoCol = (id) => toggleEnSet(gruposCol, setGruposCol, id);
   const toggleCategoria = (c) => toggleEnSet(categoriasAbiertas, setCategoriasAbiertas, c);
+
+  // group_ids que están dentro de una combinación activa "+ Eval Docente"
+  const enCombo = useMemo(
+    () => new Set(combos.flatMap((c) => c.member_group_ids || [])),
+    [combos]
+  );
 
   const filasFiltradas = useMemo(
     () =>
@@ -425,9 +484,25 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   const porCategoria = useMemo(() => {
     const m = {};
     CATEGORIAS_EVALUACION_DOCENTE.forEach((c) => (m[c] = []));
-    filasFiltradas.forEach((f) => (m[f.categoria_programa] || (m[f.categoria_programa] = [])).push(f));
+    filasFiltradas
+      .filter((f) => !enCombo.has(f.group_id)) // los combinados van a su sección
+      .forEach((f) => (m[f.categoria_programa] || (m[f.categoria_programa] = [])).push(f));
     return m;
-  }, [filasFiltradas]);
+  }, [filasFiltradas, enCombo]);
+
+  // combos visibles según el filtro de meses (con sus filas miembro resueltas)
+  const combosVisibles = useMemo(() => {
+    return combos
+      .filter((c) => !mesesElegidos.size || mesesElegidos.has(c.mes_calificacion))
+      .map((c) => ({
+        ...c,
+        miembros: (c.member_group_ids || [])
+          .map((gid) => filas.find((f) => f.group_id === gid))
+          .filter(Boolean),
+      }))
+      .filter((c) => c.miembros.length > 0)
+      .filter((c) => incluirModulo0 || !c.miembros.some((m) => esModulo0_(m.materia)));
+  }, [combos, filas, mesesElegidos, incluirModulo0]);
 
   return (
     <section className="space-y-4">
@@ -493,15 +568,248 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
               onToggle={() => toggleCategoria(categoria)}
               gruposCol={gruposCol}
               onToggleGrupoCol={toggleGrupoCol}
+              dirIdx={dirIdx}
             />
           ))}
+          {combosVisibles.length > 0 && (
+            <SeccionCombinadosEvalDocente combos={combosVisibles} gruposCol={gruposCol} onToggleGrupoCol={toggleGrupoCol} dirIdx={dirIdx} />
+          )}
         </div>
       )}
     </section>
   );
 }
 
-function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol }) {
+/* ==========================================================================
+ *  "GRUPOS COMBINADOS" — se combinan desde la app de Asistencia y Aprobación
+ *  (tabla compartida `grupos_combinados`, opción "+ Evaluación Docente").
+ *  Acá es solo lectura: aparecen juntos para que las dos apps concuerden.
+ *  La tasa de participación NO se toca: cada carrera mantiene sus cupos
+ *  (decisión del usuario 2026-09-10 — los estudiantes siguen matriculados
+ *  en su carrera aunque compartan aula).
+ * ======================================================================== */
+const COMB_COLOR_ED = '#c084fc';
+
+// Columnas cuyo valor es propio de cada grupo miembro (una celda por fila);
+// el resto se combina con rowSpan (es igual para toda la combinación).
+const COMB_ED_POR_MIEMBRO = new Set(['id_grupo_mapeo', 'group_id', 'section_id', 'cupos_activos', 'respuestas']);
+
+/** Botón "copiar" con feedback "✓ copiado". */
+function BotonCopiar({ valor, label }) {
+  const [copiado, setCopiado] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(String(valor));
+        } catch {
+          const ta = document.createElement('textarea');
+          ta.value = String(valor);
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); } catch { /* nada */ }
+          ta.remove();
+        }
+        setCopiado(true);
+        setTimeout(() => setCopiado(false), 1500);
+      }}
+      className={
+        'shrink-0 text-[10px] px-1.5 py-0.5 rounded border transition-colors ' +
+        (copiado ? 'border-emerald-700 text-emerald-300' : 'border-ink-600 text-slate-400 hover:text-sky-300 hover:border-sky-700')
+      }
+      title={`Copiar ${label}`}
+    >
+      {copiado ? '✓ copiado' : 'copiar'}
+    </button>
+  );
+}
+
+/** Nombre del docente con tarjeta de contacto INTERACTIVA (se puede entrar
+ *  con el mouse para seleccionar el texto o usar "copiar"). Cierra con
+ *  retardo. Portal a document.body + posición fija. */
+function TooltipDocente({ nombre, dir }) {
+  const [abierto, setAbierto] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const cerrarTimer = useRef(null);
+  useEffect(() => () => cerrarTimer.current && clearTimeout(cerrarTimer.current), []);
+  if (!nombre) return '—';
+  const t = dir?.porNombre?.get(normalizar(nombre)) || null;
+  if (!t) return nombre;
+
+  const cancelarCierre = () => {
+    if (cerrarTimer.current) {
+      clearTimeout(cerrarTimer.current);
+      cerrarTimer.current = null;
+    }
+  };
+  const abrir = (e) => {
+    cancelarCierre();
+    const r = e.currentTarget.getBoundingClientRect();
+    const ancho = 280;
+    let x = r.left;
+    if (x + ancho > window.innerWidth - 8) x = window.innerWidth - ancho - 8;
+    setPos({ x: Math.max(8, x), y: r.bottom + 4 });
+    setAbierto(true);
+  };
+  const cerrarPronto = () => {
+    cancelarCierre();
+    cerrarTimer.current = setTimeout(() => setAbierto(false), 200);
+  };
+
+  return (
+    <>
+      <span
+        className="underline decoration-dotted decoration-slate-500 underline-offset-2 cursor-help"
+        onMouseEnter={abrir}
+        onMouseLeave={cerrarPronto}
+      >
+        {nombre}
+      </span>
+      {abierto &&
+        createPortal(
+          <div
+            className="fixed z-[999] rounded-lg border border-ink-500 bg-ink-900 shadow-2xl px-3 py-2.5 text-xs select-text"
+            style={{ left: pos.x, top: pos.y, width: 280 }}
+            onMouseEnter={cancelarCierre}
+            onMouseLeave={cerrarPronto}
+          >
+            <div className="font-semibold text-slate-100 leading-tight mb-1.5">{t.docente || t.nombres_completos || nombre}</div>
+            {t.celular && (
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-200">📱 <span className="select-all">{t.celular}</span></span>
+                <BotonCopiar valor={t.celular} label="celular" />
+              </div>
+            )}
+            {t.correo_institucional && (
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <span className="text-slate-200 break-all">✉ <span className="select-all">{t.correo_institucional}</span></span>
+                <BotonCopiar valor={t.correo_institucional} label="correo" />
+              </div>
+            )}
+            {!t.celular && !t.correo_institucional && <div className="text-slate-500">Sin datos de contacto en el directorio.</div>}
+            {t.docente_activo === false && <div className="mt-1 text-[10px] text-slate-500">docente inactivo</div>}
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}
+
+/**
+ * "GRUPOS COMBINADOS" en Evaluación Docente. Reusa las MISMAS columnas y los
+ * MISMOS acordeones que la tabla de Grupos (GRUPOS_COL_DEF / COLDEF_GRUPOS /
+ * TheadGruposCategoria, estado `gruposCol` compartido). Una fila por grupo
+ * miembro; las celdas iguales para toda la combinación van con rowSpan.
+ * Solo lectura: se combina/desagrupa desde la app de Asistencia y Aprobación.
+ */
+function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dirIdx }) {
+  const totalCols = GRUPOS_COL_DEF.reduce((a, g) => a + (gruposCol.has(g.id) ? g.cols.length : 1), 0);
+  return (
+    <section className="rounded-2xl overflow-hidden border" style={{ borderColor: COMB_COLOR_ED + '66' }}>
+      <div className="flex items-center gap-3 px-5 py-3.5 border-l-4" style={{ borderColor: COMB_COLOR_ED, backgroundColor: COMB_COLOR_ED + '24' }}>
+        <span className="text-base font-extrabold uppercase tracking-[0.14em]" style={{ color: COMB_COLOR_ED }}>⧉ Grupos combinados</span>
+        <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ color: COMB_COLOR_ED, backgroundColor: COMB_COLOR_ED + '2E' }}>
+          {combos.length}
+        </span>
+        <span className="text-[11px] text-slate-500 ml-2">Se combinan desde la app de Asistencia y Aprobación. Se cuentan como una unidad (1 materia).</span>
+      </div>
+      <div className="overflow-x-auto bg-ink-900">
+        <table className="w-full text-xs border-collapse whitespace-nowrap">
+          <TheadGruposCategoria gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
+          {combos.map((c) => (
+            <FilasComboCombinadoED key={c.id} c={c} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} totalCols={totalCols} dirIdx={dirIdx} />
+          ))}
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirIdx }) {
+  const ms = c.miembros || [];
+  const m0 = ms[0] || {};
+  const n = ms.length || 1;
+  const suma = ms.reduce((a, m) => a + (Number(m.cupos_activos) || 0), 0);
+  // valores para las celdas combinadas
+  const merged = {
+    materia: c.subject_name || m0.materia || '',
+    mes_calificacion: c.mes_calificacion || m0.mes_calificacion || '',
+    horario: c.horario || m0.horario || '',
+    fecha_calendario_inicio: m0.fecha_calendario_inicio || '',
+    fecha_calendario_fin: m0.fecha_calendario_fin || '',
+    tutor_calendario: c.tutor_calendario || m0.tutor_calendario || '',
+  };
+
+  return (
+    <tbody>
+      {ms.map((m, i) => (
+        <tr key={m.group_id} className="border-t border-ink-800 hover:bg-ink-850/40">
+          {GRUPOS_COL_DEF.map((g) => {
+            const abierto = gruposCol.has(g.id);
+            if (!abierto) {
+              if (i !== 0) return null;
+              return (
+                <td
+                  key={g.id}
+                  onClick={() => onToggleGrupoCol(g.id)}
+                  rowSpan={n}
+                  className="px-2 py-2 text-center text-slate-600 cursor-pointer hover:text-slate-300 align-top"
+                  style={{ borderLeft: `2px solid ${g.color}66`, backgroundColor: g.color + '0A' }}
+                  title={'Desplegar ' + g.label}
+                >
+                  ···
+                </td>
+              );
+            }
+            return g.cols.map((key, j) => {
+              const def = COLDEF_GRUPOS[key];
+              const perMiembro = COMB_ED_POR_MIEMBRO.has(key);
+              if (!perMiembro && i !== 0) return null;
+              const style = j === 0 ? { borderLeft: `2px solid ${g.color}4D` } : {};
+              if (!perMiembro) style.backgroundColor = 'rgba(148,163,184,0.06)';
+
+              let contenido;
+              if (key === 'mes_calificacion') {
+                contenido = (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(merged.mes_calificacion) }} />
+                    {merged.mes_calificacion || '—'}
+                  </span>
+                );
+              } else if (key === 'tutor_calendario') {
+                contenido = <TooltipDocente nombre={merged.tutor_calendario} dir={dirIdx} />;
+              } else if (perMiembro) {
+                contenido = celdaGrupo_(m, key);
+              } else {
+                contenido = celdaGrupo_(merged, key);
+              }
+
+              return (
+                <td
+                  key={key}
+                  rowSpan={perMiembro ? undefined : n}
+                  className={'px-3 py-2 align-top ' + (def.center ? 'text-center ' : '') + (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ')}
+                  style={style}
+                >
+                  {contenido}
+                </td>
+              );
+            });
+          })}
+        </tr>
+      ))}
+      <tr className="border-t border-ink-800/60">
+        <td colSpan={totalCols} className="px-3 py-1.5 text-right text-[11px] text-slate-500">
+          {c.etiqueta} · <span style={{ color: COMB_COLOR_ED }} className="font-semibold">cupos combinados: {suma}</span>
+        </td>
+      </tr>
+    </tbody>
+  );
+}
+
+function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol, dirIdx }) {
   const color = COLOR_CATEGORIA[categoria] || '#5b7fff';
   const [fMateria, setFMateria] = useState('');
   const [fTutor, setFTutor] = useState('');
@@ -515,6 +823,19 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
     () => gruposFiltrados.reduce((a, g) => a + (Number(g.cupos_activos) || 0), 0),
     [gruposFiltrados]
   );
+  // total de respuestas dedup por materia (varios grupos comparten materia y
+  // muestran el MISMO conteo -- no se debe sumar la misma materia dos veces).
+  const respuestasTotales = useMemo(() => {
+    const vistas = new Set();
+    let t = 0;
+    gruposFiltrados.forEach((g) => {
+      const k = claveRespuestas_(g.categoria_programa, g.mes_calificacion, g.materia);
+      if (vistas.has(k)) return;
+      vistas.add(k);
+      t += Number(g.respuestas) || 0;
+    });
+    return t;
+  }, [gruposFiltrados]);
   const totalCols = GRUPOS_COL_DEF.reduce((acc, g) => acc + (gruposCol.has(g.id) ? g.cols.length : 1), 0);
 
   return (
@@ -530,9 +851,15 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
         <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={{ color, backgroundColor: color + '2E' }}>
           {filtrando ? `${gruposFiltrados.length} de ${grupos.length}` : `${grupos.length} grupos`}
         </span>
-        <span className="ml-auto text-xs text-slate-400">
-          <span className="text-slate-500">Cupos activos </span>
-          <span className="font-semibold text-slate-200">{cuposTotales}</span>
+        <span className="ml-auto flex items-center gap-4 text-xs text-slate-400">
+          <span>
+            <span className="text-slate-500">Cupos activos </span>
+            <span className="font-semibold text-slate-200">{cuposTotales}</span>
+          </span>
+          <span>
+            <span className="text-slate-500">Respuestas </span>
+            <span className="font-semibold text-slate-200">{respuestasTotales}</span>
+          </span>
         </span>
       </button>
 
@@ -564,7 +891,7 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
                   </tr>
                 ) : (
                   gruposFiltrados.map((f) => (
-                    <FilaGrupoCategoria key={f.group_id} f={f} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
+                    <FilaGrupoCategoria key={f.group_id} f={f} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} dirIdx={dirIdx} />
                   ))
                 )}
               </tbody>
@@ -664,7 +991,7 @@ function TheadGruposCategoria({ gruposCol, onToggleGrupoCol }) {
   );
 }
 
-function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol }) {
+function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx }) {
   return (
     <tr className="border-t border-ink-800 hover:bg-ink-850/50">
       {GRUPOS_COL_DEF.map((g) => {
@@ -685,10 +1012,17 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol }) {
         return g.cols.map((key, j) => {
           const def = COLDEF_GRUPOS[key];
           const style = j === 0 ? { borderLeft: `2px solid ${g.color}4D` } : {};
+          const esResp = key === 'respuestas';
           return (
             <td
               key={key}
-              className={'px-3 py-2 ' + (def.center ? 'text-center ' : '') + (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ')}
+              title={esResp ? 'Evaluaciones registradas para esta materia en su categoría y mes' : undefined}
+              className={
+                'px-3 py-2 ' +
+                (def.center ? 'text-center ' : '') +
+                (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ') +
+                (esResp ? (f.respuestas > 0 ? 'font-semibold text-emerald-300 ' : 'text-slate-600 ') : '')
+              }
               style={style}
             >
               {key === 'mes_calificacion' ? (
@@ -696,6 +1030,8 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol }) {
                   <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(f.mes_calificacion) }} />
                   {f.mes_calificacion}
                 </span>
+              ) : key === 'tutor_calendario' ? (
+                <TooltipDocente nombre={f.tutor_calendario} dir={dirIdx} />
               ) : (
                 celdaGrupo_(f, key)
               )}

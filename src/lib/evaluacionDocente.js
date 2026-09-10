@@ -130,6 +130,45 @@ export async function fetchGruposEvaluacionDocente() {
   return data || [];
 }
 
+/**
+ * Grupos combinados que aplican a Evaluación Docente. Los crea/deshace la
+ * app de Asistencia y Aprobación (tabla compartida `grupos_combinados`);
+ * acá se leen para mostrar la combinación también en esta app y que las
+ * dos concuerden. Solo las que se marcaron "+ Evaluación Docente".
+ */
+export async function fetchGruposCombinadosEvalDocente() {
+  const { data, error } = await supabase
+    .from('grupos_combinados')
+    .select('id, mes_calificacion, member_group_ids, member_mapeos, etiqueta, carreras, subject_name, tutor_calendario, horario, creado_en')
+    .eq('activo', true)
+    .eq('aplica_evaluacion_docente', true)
+    .order('creado_en', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+/** Directorio de docentes (tabla compartida `directutor_tutores_base_de_directorio`,
+ *  SELECT público). Para el tooltip de contacto al pasar el mouse por el
+ *  nombre del docente en la tabla de Grupos. */
+export async function fetchDirectorioTutores() {
+  const { data, error } = await supabase
+    .from('directutor_tutores_base_de_directorio')
+    .select('id_docente, nombres_completos, docente, celular, correo_institucional, docente_activo')
+    .order('nombres_completos', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}
+
+/** Índice por nombre normalizado → registro del directorio. */
+export function indexarDirectorioPorNombre(lista) {
+  const porNombre = new Map();
+  (lista || []).forEach((t) => {
+    if (t.docente) porNombre.set(normalizar(t.docente), t);
+    if (t.nombres_completos) porNombre.set(normalizar(t.nombres_completos), t);
+  });
+  return { porNombre };
+}
+
 /** El id del estudiante se genera en el navegador (crypto.randomUUID) en vez
  *  de leerlo de vuelta con RETURNING -- las tablas son INSERT-only para
  *  anon (sin policy de SELECT, a propósito, para que nadie con la key
