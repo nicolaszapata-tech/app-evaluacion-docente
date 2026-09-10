@@ -159,6 +159,21 @@ export async function fetchDirectorioTutores() {
   return data || [];
 }
 
+/** Cantidad de estudiantes en la lista del docente, por group_id. Vive en
+ *  `asap_seguimiento_grupo` (app de Asistencia y Aprobación, mismo Supabase,
+ *  lectura pública). Devuelve un Map group_id → nº. */
+export async function fetchCantEstListasPorGrupo() {
+  const { data, error } = await supabase
+    .from('asap_seguimiento_grupo')
+    .select('group_id, cantidad_estudiantes_listas');
+  if (error) throw error;
+  const m = new Map();
+  (data || []).forEach((r) => {
+    if (r.group_id != null) m.set(r.group_id, r.cantidad_estudiantes_listas);
+  });
+  return m;
+}
+
 /** Índice por nombre normalizado → registro del directorio. */
 export function indexarDirectorioPorNombre(lista) {
   const porNombre = new Map();
@@ -216,6 +231,28 @@ async function llamarPanel_(body) {
 
 export async function togglearMesActivo(mes, activo) {
   return llamarPanel_({ accion: 'toggle_mes', mes, activo });
+}
+
+/** Alerta a un tutor cuya materia YA CERRÓ y NO tiene ninguna respuesta de
+ *  evaluación docente -- 2026-09-10, a pedido del usuario (botón ⇒ en la
+ *  tabla de Grupos). Va por /api/panel -> webhook de n8n (accion=
+ *  alerta_cierre): n8n manda el correo y registra la fila en
+ *  doc_alertas_cierre. `canal` = 'email' hoy; 'whatsapp' queda contemplado
+ *  para cuando exista el bot. Devuelve { ok, id, estado, detalle }. */
+export async function enviarAlertaCierre(payload) {
+  return llamarPanel_({ accion: 'alerta_cierre', canal: 'email', ...payload });
+}
+
+/** Historial de alertas de cierre ya enviadas (tabla doc_alertas_cierre,
+ *  SELECT público) -- para marcar en la tabla los grupos ya avisados y para
+ *  el panel "Alertas de cierre" del rail derecho. */
+export async function fetchAlertasCierre() {
+  const { data, error } = await supabase
+    .from('doc_alertas_cierre')
+    .select('id, group_id, id_grupo_mapeo, categoria_programa, mes_calificacion, materia, tutor_calendario, canal, destinatario, enviado_por, estado, detalle, creado_en')
+    .order('creado_en', { ascending: false });
+  if (error) throw error;
+  return data || [];
 }
 
 /** Botón "Actualizar datos de grupos" del panel (2026-09-08, a pedido del

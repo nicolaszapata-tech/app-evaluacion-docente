@@ -47,7 +47,10 @@ export default async function handler(req, res) {
     const respuesta = await fetch(`${WEBHOOK_BASE}/${WEBHOOK_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Sync-Secret': SYNC_SECRET },
-      body: JSON.stringify(body),
+      // se reenvía correoSesion dentro del body (ya validado arriba) para que
+      // el workflow pueda registrar quién disparó la acción -- ej. alerta_cierre
+      // guarda enviado_por en doc_alertas_cierre.
+      body: JSON.stringify({ ...body, correoSesion }),
     });
     const texto = await respuesta.text();
     res.status(respuesta.status).setHeader('Content-Type', 'application/json').send(texto);

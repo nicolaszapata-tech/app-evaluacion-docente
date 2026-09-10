@@ -15,6 +15,9 @@ import {
   fetchGruposCombinadosEvalDocente,
   fetchDirectorioTutores,
   indexarDirectorioPorNombre,
+  fetchCantEstListasPorGrupo,
+  enviarAlertaCierre,
+  fetchAlertasCierre,
   formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
   fetchMesesDisponibles,
@@ -356,15 +359,48 @@ const COLDEF_GRUPOS = {
   section_id: { t: 'Section ID', mono: true },
   tutor_calendario: { t: 'Tutor Calendario', wide: true },
   cupos_activos: { t: 'Cupos Activos', center: true },
+  cantidad_estudiantes_listas: { t: 'Cant. est. listas', center: true },
   respuestas: { t: 'Respuestas', center: true },
+  estado_materia: { t: 'Estado', center: true },
+  alerta_cierre: { t: '', center: true },
 };
 
 const GRUPOS_COL_DEF = [
   { id: 'ident', label: 'Identificación', color: '#94a3b8', cols: ['id_grupo_mapeo', 'materia', 'mes_calificacion'] },
   { id: 'acad', label: 'Detalle académico', color: '#a78bfa', cols: ['horario', 'fecha_calendario_inicio', 'fecha_calendario_fin', 'group_id', 'section_id'] },
   { id: 'docente', label: 'Docente', color: '#38bdf8', cols: ['tutor_calendario'] },
-  { id: 'cupos', label: 'Cupos y respuestas', color: '#34d399', cols: ['cupos_activos', 'respuestas'] },
+  { id: 'cupos', label: 'Seguimiento', color: '#34d399', cols: ['cupos_activos', 'cantidad_estudiantes_listas', 'respuestas', 'estado_materia', 'alerta_cierre'] },
 ];
+
+/** Fecha de HOY en zona horaria Bogotá, como 'YYYY-MM-DD' (America/Bogota,
+ *  UTC-5, sin horario de verano). */
+function hoyBogota_() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
+
+/** Estado de una materia según sus fechas de calendario (2026-09-10, a
+ *  pedido del usuario): EN CURSO mientras hoy (Bogotá) esté DENTRO de
+ *  [fecha_calendario_inicio, fecha_calendario_fin] inclusive; si hoy ya
+ *  pasó la fecha fin -> CERRÓ; si aún no llega a la de inicio -> POR
+ *  INICIAR. Las fechas son `date` de Postgres ('YYYY-MM-DD'), así que
+ *  comparar como texto ya es cronológico. null si no hay fecha fin. */
+function estadoMateria_(inicio, fin) {
+  const i = String(inicio || '').slice(0, 10);
+  const f = String(fin || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return null;
+  const hoy = hoyBogota_();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(i) && hoy < i) return 'por_iniciar';
+  if (hoy > f) return 'cerro';
+  return 'en_curso';
+}
+
+const ESTADO_MATERIA_META = {
+  por_iniciar: { txt: 'Por iniciar', color: '#94a3b8' },
+  en_curso: { txt: 'En curso', color: '#38bdf8' },
+  cerro: { txt: 'Cerró', color: '#f59e0b' },
+};
 
 /** Clave para cruzar un grupo de `doc_base_de_grupos` con el conteo de
  *  respuestas de `doc_respuestas_consolidada` -- 2026-09-10, a pedido del
@@ -402,7 +438,11 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   const [filasRaw, setFilasRaw] = useState([]);
   const [crudo, setCrudo] = useState([]); // respuestas crudas, para contar por materia
   const [combos, setCombos] = useState([]);
+  const [mapaListas, setMapaListas] = useState(() => new Map()); // group_id -> cant. est. en la lista (asap_seguimiento_grupo)
   const [dirIdx, setDirIdx] = useState(null); // índice del directorio de docentes (tooltip de contacto)
+  const [alertas, setAlertas] = useState([]); // doc_alertas_cierre (historial)
+  const [alertaEnviando, setAlertaEnviando] = useState(null); // group_id en curso
+  const [alertaMsg, setAlertaMsg] = useState(null); // { tipo, texto }
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
@@ -413,16 +453,20 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   useEffect(() => {
     (async () => {
       try {
-        const [g, c, dir, sc] = await Promise.all([
+        const [g, c, dir, sc, ml, al] = await Promise.all([
           fetchGruposEvaluacionDocente(),
           fetchGruposCombinadosEvalDocente().catch(() => []),
           fetchDirectorioTutores().catch(() => []),
           fetchStatsYCrudo().then((r) => r.crudo || []).catch(() => []),
+          fetchCantEstListasPorGrupo().catch(() => new Map()),
+          fetchAlertasCierre().catch(() => []),
         ]);
         setFilasRaw(g);
         setCombos(c);
         setDirIdx(indexarDirectorioPorNombre(dir));
         setCrudo(sc);
+        setMapaListas(ml);
+        setAlertas(al);
       } catch (e) {
         setError(e.message || String(e));
       } finally {
@@ -430,6 +474,38 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       }
     })();
   }, []);
+
+  // group_id -> estado de la última alerta ('enviado' | 'registrada' | 'error').
+  const alertasPorGrupo = useMemo(() => {
+    const m = new Map();
+    // alertas viene ordenado por creado_en desc -> la primera que se ve de
+    // cada grupo es la más reciente.
+    alertas.forEach((a) => { if (!m.has(a.group_id)) m.set(a.group_id, a.estado); });
+    return m;
+  }, [alertas]);
+
+  async function onEnviarAlerta(f, correo) {
+    setAlertaEnviando(f.group_id);
+    setAlertaMsg(null);
+    try {
+      await enviarAlertaCierre({
+        group_id: f.group_id,
+        id_grupo_mapeo: f.id_grupo_mapeo,
+        categoria_programa: f.categoria_programa,
+        mes_calificacion: f.mes_calificacion,
+        materia: f.materia,
+        tutor_calendario: f.tutor_calendario,
+        destinatario: correo || null,
+      });
+      const frescas = await fetchAlertasCierre().catch(() => alertas);
+      setAlertas(frescas);
+      setAlertaMsg({ tipo: 'ok', texto: `Alerta registrada para ${f.materia}${correo ? ' — correo a ' + correo : ''}.` });
+    } catch (e) {
+      setAlertaMsg({ tipo: 'error', texto: 'No se pudo enviar la alerta: ' + (e.message || e) });
+    } finally {
+      setAlertaEnviando(null);
+    }
+  }
 
   // conteo de respuestas por (categoria + mes + materia) normalizado.
   const mapaRespuestas = useMemo(() => {
@@ -450,8 +526,10 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       filasRaw.map((f) => ({
         ...f,
         respuestas: mapaRespuestas[claveRespuestas_(f.categoria_programa, f.mes_calificacion, f.materia)] || 0,
+        cantidad_estudiantes_listas: mapaListas.has(f.group_id) ? mapaListas.get(f.group_id) : null,
+        estado_materia: estadoMateria_(f.fecha_calendario_inicio, f.fecha_calendario_fin),
       })),
-    [filasRaw, mapaRespuestas]
+    [filasRaw, mapaRespuestas, mapaListas]
   );
 
   function toggleEnSet(set, setSet, valor) {
@@ -555,6 +633,18 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       </div>
 
       {error && <div className="text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>}
+      {alertaMsg && (
+        <div
+          className={
+            'text-sm rounded-md px-3 py-2 border ' +
+            (alertaMsg.tipo === 'ok'
+              ? 'text-emerald-300 bg-emerald-950/40 border-emerald-900'
+              : 'text-red-300 bg-red-950/40 border-red-900')
+          }
+        >
+          {alertaMsg.texto}
+        </div>
+      )}
       {cargando ? (
         <p className="text-xs text-slate-400">Cargando…</p>
       ) : (
@@ -569,11 +659,15 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
               gruposCol={gruposCol}
               onToggleGrupoCol={toggleGrupoCol}
               dirIdx={dirIdx}
+              alertasPorGrupo={alertasPorGrupo}
+              alertaEnviando={alertaEnviando}
+              onEnviarAlerta={onEnviarAlerta}
             />
           ))}
           {combosVisibles.length > 0 && (
             <SeccionCombinadosEvalDocente combos={combosVisibles} gruposCol={gruposCol} onToggleGrupoCol={toggleGrupoCol} dirIdx={dirIdx} />
           )}
+          <RegistroAlertasCierre alertas={alertas} />
         </div>
       )}
     </section>
@@ -592,7 +686,7 @@ const COMB_COLOR_ED = '#c084fc';
 
 // Columnas cuyo valor es propio de cada grupo miembro (una celda por fila);
 // el resto se combina con rowSpan (es igual para toda la combinación).
-const COMB_ED_POR_MIEMBRO = new Set(['id_grupo_mapeo', 'group_id', 'section_id', 'cupos_activos', 'respuestas']);
+const COMB_ED_POR_MIEMBRO = new Set(['id_grupo_mapeo', 'group_id', 'section_id', 'cupos_activos', 'cantidad_estudiantes_listas', 'respuestas', 'estado_materia', 'alerta_cierre']);
 
 /** Botón "copiar" con feedback "✓ copiado". */
 function BotonCopiar({ valor, label }) {
@@ -740,6 +834,8 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
     fecha_calendario_inicio: m0.fecha_calendario_inicio || '',
     fecha_calendario_fin: m0.fecha_calendario_fin || '',
     tutor_calendario: c.tutor_calendario || m0.tutor_calendario || '',
+    // los grupos combinados comparten una sola lista → cant. est. listas es la misma
+    cantidad_estudiantes_listas: m0.cantidad_estudiantes_listas ?? null,
   };
 
   return (
@@ -780,6 +876,10 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
                 );
               } else if (key === 'tutor_calendario') {
                 contenido = <TooltipDocente nombre={merged.tutor_calendario} dir={dirIdx} />;
+              } else if (key === 'estado_materia') {
+                contenido = <PillEstadoMateria estado={m.estado_materia} />;
+              } else if (key === 'alerta_cierre') {
+                contenido = <span className="text-slate-700">·</span>;
               } else if (perMiembro) {
                 contenido = celdaGrupo_(m, key);
               } else {
@@ -809,7 +909,7 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
   );
 }
 
-function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol, dirIdx }) {
+function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, alertaEnviando, onEnviarAlerta }) {
   const color = COLOR_CATEGORIA[categoria] || '#5b7fff';
   const [fMateria, setFMateria] = useState('');
   const [fTutor, setFTutor] = useState('');
@@ -891,7 +991,16 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
                   </tr>
                 ) : (
                   gruposFiltrados.map((f) => (
-                    <FilaGrupoCategoria key={f.group_id} f={f} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} dirIdx={dirIdx} />
+                    <FilaGrupoCategoria
+                      key={f.group_id}
+                      f={f}
+                      gruposCol={gruposCol}
+                      onToggleGrupoCol={onToggleGrupoCol}
+                      dirIdx={dirIdx}
+                      alertasPorGrupo={alertasPorGrupo}
+                      alertaEnviando={alertaEnviando}
+                      onEnviarAlerta={onEnviarAlerta}
+                    />
                   ))
                 )}
               </tbody>
@@ -991,7 +1100,61 @@ function TheadGruposCategoria({ gruposCol, onToggleGrupoCol }) {
   );
 }
 
-function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx }) {
+/** Pastilla de estado de la materia (Por iniciar / En curso / Cerró). */
+function PillEstadoMateria({ estado }) {
+  const meta = ESTADO_MATERIA_META[estado];
+  if (!meta) return <span className="text-slate-600">—</span>;
+  return (
+    <span
+      className="inline-block text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5"
+      style={{ color: meta.color, backgroundColor: meta.color + '22', border: `1px solid ${meta.color}55` }}
+    >
+      {meta.txt}
+    </span>
+  );
+}
+
+/** Botón ⇒ para alertar al tutor cuando su materia YA CERRÓ y NO tiene
+ *  ninguna respuesta de evaluación. Solo aparece en esas filas. */
+function BotonAlertaCierre({ f, dirIdx, estadoAlerta, enviando, onEnviar }) {
+  const elegible = f.estado_materia === 'cerro' && (f.respuestas || 0) === 0;
+  if (!elegible) return <span className="text-slate-700">·</span>;
+
+  const tutor = dirIdx?.porNombre?.get(normalizar(f.tutor_calendario || '')) || null;
+  const correo = tutor?.correo_institucional || '';
+
+  if (estadoAlerta === 'enviado' || estadoAlerta === 'registrada') {
+    return (
+      <span
+        className={'text-xs ' + (estadoAlerta === 'enviado' ? 'text-emerald-400' : 'text-amber-400')}
+        title={
+          estadoAlerta === 'enviado'
+            ? 'Alerta enviada al tutor'
+            : 'Alerta registrada — falta conectar el envío de correo en n8n'
+        }
+      >
+        {estadoAlerta === 'enviado' ? '✓ enviada' : '• registrada'}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={enviando}
+      onClick={() => onEnviar(f, correo)}
+      title={
+        correo
+          ? `Enviar alerta al tutor (${correo}) — materia cerrada sin evaluaciones`
+          : 'No hay correo del tutor en el directorio — se registrará igual la alerta'
+      }
+      className="inline-flex items-center justify-center rounded-md border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-xs font-semibold text-amber-300 hover:bg-amber-900/40 hover:border-amber-600 disabled:opacity-50 disabled:cursor-wait transition-colors"
+    >
+      {enviando ? '…' : '⇒ alertar'}
+    </button>
+  );
+}
+
+function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, alertaEnviando, onEnviarAlerta }) {
   return (
     <tr className="border-t border-ink-800 hover:bg-ink-850/50">
       {GRUPOS_COL_DEF.map((g) => {
@@ -1032,6 +1195,16 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx }) {
                 </span>
               ) : key === 'tutor_calendario' ? (
                 <TooltipDocente nombre={f.tutor_calendario} dir={dirIdx} />
+              ) : key === 'estado_materia' ? (
+                <PillEstadoMateria estado={f.estado_materia} />
+              ) : key === 'alerta_cierre' ? (
+                <BotonAlertaCierre
+                  f={f}
+                  dirIdx={dirIdx}
+                  estadoAlerta={alertasPorGrupo?.get(f.group_id) || null}
+                  enviando={alertaEnviando === f.group_id}
+                  onEnviar={onEnviarAlerta}
+                />
               ) : (
                 celdaGrupo_(f, key)
               )}
@@ -1040,6 +1213,64 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx }) {
         });
       })}
     </tr>
+  );
+}
+
+/** Historial de alertas de cierre enviadas (tabla doc_alertas_cierre).
+ *  Colapsable, arranca cerrado. 2026-09-10, a pedido del usuario:
+ *  "seria bueno poder tener un registro en la app de eso". */
+function RegistroAlertasCierre({ alertas }) {
+  const [abierto, setAbierto] = useState(false);
+  if (!alertas || alertas.length === 0) return null;
+  return (
+    <section className="rounded-2xl overflow-hidden border border-ink-700">
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        className="w-full flex items-center gap-3 px-5 py-3 bg-ink-900 hover:bg-ink-850 transition-colors"
+      >
+        <span className={'text-sm leading-none transition-transform text-slate-400 ' + (abierto ? 'rotate-90' : '')}>▸</span>
+        <span className="text-sm font-semibold text-slate-200">Alertas de cierre enviadas</span>
+        <span className="text-xs font-semibold rounded-full px-2 py-0.5 bg-ink-700 text-slate-300">{alertas.length}</span>
+      </button>
+      {abierto && (
+        <div className="overflow-x-auto bg-ink-900 border-t border-ink-800">
+          <table className="w-full text-xs whitespace-nowrap">
+            <thead className="bg-ink-850 text-[11px] uppercase tracking-wider text-slate-400">
+              <tr>
+                <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Materia</th>
+                <th className="px-3 py-2 text-left">Categoría · Mes</th>
+                <th className="px-3 py-2 text-left">Tutor</th>
+                <th className="px-3 py-2 text-left">Canal</th>
+                <th className="px-3 py-2 text-left">Destinatario</th>
+                <th className="px-3 py-2 text-left">Estado</th>
+                <th className="px-3 py-2 text-left">Enviada por</th>
+              </tr>
+            </thead>
+            <tbody className="text-slate-300">
+              {alertas.map((a) => (
+                <tr key={a.id} className="border-t border-ink-800">
+                  <td className="px-3 py-1.5 text-slate-400">
+                    {a.creado_en ? new Date(a.creado_en).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                  </td>
+                  <td className="px-3 py-1.5">{a.materia || '—'}</td>
+                  <td className="px-3 py-1.5 text-slate-400">{[a.categoria_programa, a.mes_calificacion].filter(Boolean).join(' · ') || '—'}</td>
+                  <td className="px-3 py-1.5">{a.tutor_calendario || '—'}</td>
+                  <td className="px-3 py-1.5">{a.canal === 'whatsapp' ? '💬 WhatsApp' : '✉ correo'}</td>
+                  <td className="px-3 py-1.5 text-slate-400">{a.destinatario || '—'}</td>
+                  <td className={'px-3 py-1.5 font-medium ' + (a.estado === 'enviado' ? 'text-emerald-300' : 'text-red-300')}>
+                    {a.estado === 'enviado' ? 'Enviada' : 'Error'}
+                    {a.detalle ? <span className="text-slate-500 font-normal"> · {a.detalle}</span> : null}
+                  </td>
+                  <td className="px-3 py-1.5 text-slate-500">{a.enviado_por || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
