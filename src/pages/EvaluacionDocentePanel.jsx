@@ -360,6 +360,7 @@ const COLDEF_GRUPOS = {
   tutor_calendario: { t: 'Tutor Calendario', wide: true },
   cupos_activos: { t: 'Cupos Activos', center: true },
   cantidad_estudiantes_listas: { t: 'Cant. est. listas', center: true },
+  asistentes_min_1_sesion: { t: 'Asist. ≥1', center: true },
   respuestas: { t: 'Respuestas', center: true },
   estado_materia: { t: 'Estado', center: true },
   alerta_cierre: { t: '', center: true },
@@ -369,7 +370,7 @@ const GRUPOS_COL_DEF = [
   { id: 'ident', label: 'Identificación', color: '#94a3b8', cols: ['id_grupo_mapeo', 'materia', 'mes_calificacion'] },
   { id: 'acad', label: 'Detalle académico', color: '#a78bfa', cols: ['horario', 'fecha_calendario_inicio', 'fecha_calendario_fin', 'group_id', 'section_id'] },
   { id: 'docente', label: 'Docente', color: '#38bdf8', cols: ['tutor_calendario'] },
-  { id: 'cupos', label: 'Seguimiento', color: '#34d399', cols: ['cupos_activos', 'cantidad_estudiantes_listas', 'respuestas', 'estado_materia', 'alerta_cierre'] },
+  { id: 'cupos', label: 'Seguimiento', color: '#34d399', cols: ['cupos_activos', 'cantidad_estudiantes_listas', 'asistentes_min_1_sesion', 'respuestas', 'estado_materia', 'alerta_cierre'] },
 ];
 
 /** Fecha de HOY en zona horaria Bogotá, como 'YYYY-MM-DD' (America/Bogota,
@@ -449,6 +450,13 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   const [mesesElegidos, setMesesElegidos] = useState(() => new Set(meses.filter((m) => activos[m])));
   const [gruposCol, setGruposCol] = useState(GRUPOS_COL_ABIERTOS_INICIAL);
   const [categoriasAbiertas, setCategoriasAbiertas] = useState(() => new Set(CATEGORIAS_EVALUACION_DOCENTE));
+  // Filtros globales que aplican a TODAS las tablas de categoría a la vez
+  // (2026-09-10, a pedido del usuario — solo en la vista Grupos por ahora).
+  // Se suman con AND a los filtros que ya tiene cada tabla por separado.
+  const [gMateria, setGMateria] = useState('');
+  const [gDocente, setGDocente] = useState('');
+  const [gCategorias, setGCategorias] = useState(() => new Set()); // vacío = todas
+  const [gCuatris, setGCuatris] = useState(() => new Set());       // vacío = todos
 
   useEffect(() => {
     (async () => {
@@ -526,7 +534,8 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       filasRaw.map((f) => ({
         ...f,
         respuestas: mapaRespuestas[claveRespuestas_(f.categoria_programa, f.mes_calificacion, f.materia)] || 0,
-        cantidad_estudiantes_listas: mapaListas.has(f.group_id) ? mapaListas.get(f.group_id) : null,
+        cantidad_estudiantes_listas: mapaListas.get(f.group_id)?.cant ?? null,
+        asistentes_min_1_sesion: mapaListas.get(f.group_id)?.asis ?? null,
         estado_materia: estadoMateria_(f.fecha_calendario_inicio, f.fecha_calendario_fin),
       })),
     [filasRaw, mapaRespuestas, mapaListas]
@@ -549,14 +558,28 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
     [combos]
   );
 
+  const cuatrimestresDisponibles = useMemo(
+    () => Array.from(new Set(filasRaw.map((f) => String(f.cuatrimestre || '').trim()).filter(Boolean))).sort(),
+    [filasRaw]
+  );
+
+  const pasaGlobales = (f) =>
+    (!gMateria || coincideBusquedaGrupos_(f.materia, gMateria)) &&
+    (!gDocente || coincideBusquedaGrupos_(f.tutor_calendario, gDocente)) &&
+    (!gCategorias.size || gCategorias.has(f.categoria_programa)) &&
+    (!gCuatris.size || gCuatris.has(String(f.cuatrimestre || '').trim()));
+
+  const hayFiltroGlobal = !!(gMateria || gDocente || gCategorias.size || gCuatris.size);
+
   const filasFiltradas = useMemo(
     () =>
       filas.filter(
         (f) =>
           (!mesesElegidos.size || mesesElegidos.has(f.mes_calificacion)) &&
-          (incluirModulo0 || !esModulo0_(f.materia))
+          (incluirModulo0 || !esModulo0_(f.materia)) &&
+          pasaGlobales(f)
       ),
-    [filas, mesesElegidos, incluirModulo0]
+    [filas, mesesElegidos, incluirModulo0, gMateria, gDocente, gCategorias, gCuatris]
   );
 
   const porCategoria = useMemo(() => {
@@ -579,8 +602,9 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
           .filter(Boolean),
       }))
       .filter((c) => c.miembros.length > 0)
-      .filter((c) => incluirModulo0 || !c.miembros.some((m) => esModulo0_(m.materia)));
-  }, [combos, filas, mesesElegidos, incluirModulo0]);
+      .filter((c) => incluirModulo0 || !c.miembros.some((m) => esModulo0_(m.materia)))
+      .filter((c) => !hayFiltroGlobal || c.miembros.some((m) => pasaGlobales(m)));
+  }, [combos, filas, mesesElegidos, incluirModulo0, gMateria, gDocente, gCategorias, gCuatris]);
 
   return (
     <section className="space-y-4">
@@ -604,6 +628,75 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
               </ChipFiltro>
             ))}
           </div>
+        </div>
+
+        {/* Filtros globales — aplican a todas las tablas de categoría a la vez */}
+        <div className="pt-1 border-t border-ink-800/70 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wider text-slate-500">Filtros globales</span>
+            {hayFiltroGlobal && (
+              <button
+                type="button"
+                onClick={() => { setGMateria(''); setGDocente(''); setGCategorias(new Set()); setGCuatris(new Set()); }}
+                className="text-[11px] text-accent-300 hover:text-accent-200"
+              >
+                limpiar
+              </button>
+            )}
+          </div>
+          <div className="grid sm:grid-cols-2 gap-x-4 gap-y-2">
+            <label className="block">
+              <span className="text-[11px] text-slate-500">Materia</span>
+              <input
+                type="text"
+                value={gMateria}
+                onChange={(e) => setGMateria(e.target.value)}
+                placeholder="filtrar por materia…"
+                className="mt-0.5 w-full bg-ink-800 border border-ink-600 rounded-md px-2.5 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-accent-500"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] text-slate-500">Docente</span>
+              <input
+                type="text"
+                value={gDocente}
+                onChange={(e) => setGDocente(e.target.value)}
+                placeholder="filtrar por docente…"
+                className="mt-0.5 w-full bg-ink-800 border border-ink-600 rounded-md px-2.5 py-1 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-accent-500"
+              />
+            </label>
+          </div>
+          <div>
+            <p className="text-[11px] text-slate-500 mb-1">Carrera</p>
+            <div className="flex flex-wrap gap-1.5">
+              {CATEGORIAS_EVALUACION_DOCENTE.map((c) => (
+                <ChipFiltro
+                  key={c}
+                  activo={gCategorias.has(c)}
+                  color={COLOR_CATEGORIA[c]}
+                  onClick={() => toggleEnSet(gCategorias, setGCategorias, c)}
+                >
+                  {c}
+                </ChipFiltro>
+              ))}
+            </div>
+          </div>
+          {cuatrimestresDisponibles.length > 0 && (
+            <div>
+              <p className="text-[11px] text-slate-500 mb-1">Cuatrimestre</p>
+              <div className="flex flex-wrap gap-1.5">
+                {cuatrimestresDisponibles.map((q) => (
+                  <ChipFiltro
+                    key={q}
+                    activo={gCuatris.has(q)}
+                    onClick={() => toggleEnSet(gCuatris, setGCuatris, q)}
+                  >
+                    {q}
+                  </ChipFiltro>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -686,7 +779,7 @@ const COMB_COLOR_ED = '#c084fc';
 
 // Columnas cuyo valor es propio de cada grupo miembro (una celda por fila);
 // el resto se combina con rowSpan (es igual para toda la combinación).
-const COMB_ED_POR_MIEMBRO = new Set(['id_grupo_mapeo', 'group_id', 'section_id', 'cupos_activos', 'cantidad_estudiantes_listas', 'respuestas', 'estado_materia', 'alerta_cierre']);
+const COMB_ED_POR_MIEMBRO = new Set(['id_grupo_mapeo', 'group_id', 'section_id', 'cupos_activos', 'cantidad_estudiantes_listas', 'asistentes_min_1_sesion', 'respuestas', 'estado_materia', 'alerta_cierre']);
 
 /** Botón "copiar" con feedback "✓ copiado". */
 function BotonCopiar({ valor, label }) {

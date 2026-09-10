@@ -121,7 +121,7 @@ export async function fetchGruposEvaluacionDocente() {
   const { data, error } = await supabase
     .from('doc_base_de_grupos')
     .select(
-      'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, horario, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
+      'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, cuatrimestre, horario, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
     )
     .order('mes_calificacion', { ascending: true })
     .order('categoria_programa', { ascending: true })
@@ -159,17 +159,20 @@ export async function fetchDirectorioTutores() {
   return data || [];
 }
 
-/** Cantidad de estudiantes en la lista del docente, por group_id. Vive en
+/** Datos de la lista del docente por group_id, traídos de
  *  `asap_seguimiento_grupo` (app de Asistencia y Aprobación, mismo Supabase,
- *  lectura pública). Devuelve un Map group_id → nº. */
+ *  lectura pública). Devuelve un Map group_id → { cant, asis }:
+ *    cant = cantidad_estudiantes_listas · asis = asistentes_min_1_sesion */
 export async function fetchCantEstListasPorGrupo() {
   const { data, error } = await supabase
     .from('asap_seguimiento_grupo')
-    .select('group_id, cantidad_estudiantes_listas');
+    .select('group_id, cantidad_estudiantes_listas, asistentes_min_1_sesion');
   if (error) throw error;
   const m = new Map();
   (data || []).forEach((r) => {
-    if (r.group_id != null) m.set(r.group_id, r.cantidad_estudiantes_listas);
+    if (r.group_id != null) {
+      m.set(r.group_id, { cant: r.cantidad_estudiantes_listas, asis: r.asistentes_min_1_sesion });
+    }
   });
   return m;
 }
