@@ -161,20 +161,31 @@ export async function fetchDirectorioTutores() {
 
 /** Datos de la lista del docente por group_id, traídos de
  *  `asap_seguimiento_grupo` (app de Asistencia y Aprobación, mismo Supabase,
- *  lectura pública). Devuelve un Map group_id → { cant, asis }:
- *    cant = cantidad_estudiantes_listas · asis = asistentes_min_1_sesion */
+ *  lectura pública). Devuelve un Map group_id → { cant, asis, listaUrl }:
+ *    cant = cantidad_estudiantes_listas · asis = asistentes_min_1_sesion
+ *    listaUrl = listado_url (link a la hoja de la lista de clase) */
 export async function fetchCantEstListasPorGrupo() {
   const { data, error } = await supabase
     .from('asap_seguimiento_grupo')
-    .select('group_id, cantidad_estudiantes_listas, asistentes_min_1_sesion');
+    .select('group_id, cantidad_estudiantes_listas, asistentes_min_1_sesion, listado_url');
   if (error) throw error;
   const m = new Map();
   (data || []).forEach((r) => {
     if (r.group_id != null) {
-      m.set(r.group_id, { cant: r.cantidad_estudiantes_listas, asis: r.asistentes_min_1_sesion });
+      m.set(r.group_id, {
+        cant: r.cantidad_estudiantes_listas,
+        asis: r.asistentes_min_1_sesion,
+        listaUrl: r.listado_url || null,
+      });
     }
   });
   return m;
+}
+
+/** URL de la ficha del grupo académico en el SIS de Kuepa (pestaña
+ *  Calificaciones). Mismo patrón que la app de Asistencia y Aprobación. */
+export function urlSisGrupo(groupId) {
+  return groupId ? `https://sis.kuepa.com/academic-group/details/${groupId}?tab=qualifications` : null;
 }
 
 /** Índice por nombre normalizado → registro del directorio. */
@@ -244,6 +255,22 @@ export async function togglearMesActivo(mes, activo) {
  *  para cuando exista el bot. Devuelve { ok, id, estado, detalle }. */
 export async function enviarAlertaCierre(payload) {
   return llamarPanel_({ accion: 'alerta_cierre', canal: 'email', ...payload });
+}
+
+/** Reporte de gestión de una materia por WhatsApp. Durante las pruebas el
+ *  destino es un número fijo de control; en producción irá al celular del
+ *  tutor. `tipo` = 'sin_respuestas' | 'insuficiente' | 'otro'. n8n arma el
+ *  texto, lo manda por la Cloud API de Meta y registra la fila en
+ *  doc_alertas_cierre (canal='whatsapp'). */
+export const WHATSAPP_DESTINO_PRUEBAS = '+573193989886';
+
+export async function enviarReporteGestion(payload) {
+  return llamarPanel_({
+    accion: 'reporte_gestion',
+    canal: 'whatsapp',
+    destino: WHATSAPP_DESTINO_PRUEBAS,
+    ...payload,
+  });
 }
 
 /** Historial de alertas de cierre ya enviadas (tabla doc_alertas_cierre,

@@ -16,6 +16,9 @@ import {
   fetchDirectorioTutores,
   indexarDirectorioPorNombre,
   fetchCantEstListasPorGrupo,
+  urlSisGrupo,
+  enviarReporteGestion,
+  WHATSAPP_DESTINO_PRUEBAS,
   enviarAlertaCierre,
   fetchAlertasCierre,
   formatearFechaDDMMYYYY,
@@ -44,7 +47,7 @@ import {
   togglearMesActivo,
 } from '../lib/evaluacionDocente.js';
 
-const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas', RANKING: 'ranking' };
+const VISTAS = { TABLA: 'tabla', ESTADISTICAS: 'estadisticas', RANKING: 'ranking', ALERTAS: 'alertas' };
 
 export default function EvaluacionDocentePanel() {
   const [vista, setVista] = useState(VISTAS.TABLA);
@@ -126,6 +129,7 @@ export default function EvaluacionDocentePanel() {
         {vista === VISTAS.TABLA && <TablaGrupos meses={meses} activos={activos} incluirModulo0={incluirModulo0} />}
         {vista === VISTAS.ESTADISTICAS && <Estadisticas meses={meses} incluirModulo0={incluirModulo0} />}
         {vista === VISTAS.RANKING && <RankingDocente incluirModulo0={incluirModulo0} />}
+        {vista === VISTAS.ALERTAS && <VistaAlertasCierre />}
       </div>
     </div>
     </>
@@ -283,6 +287,7 @@ function NavLateral({ vista, onCambiarVista }) {
     { id: VISTAS.TABLA, label: 'Grupos', icono: '☰' },
     { id: VISTAS.ESTADISTICAS, label: 'Estadísticas', icono: '📊' },
     { id: VISTAS.RANKING, label: 'Ranking Docente', icono: '🏅' },
+    { id: VISTAS.ALERTAS, label: 'Alertas de cierre', icono: '📣' },
   ];
 
   function boton(item, compacto) {
@@ -363,7 +368,7 @@ const COLDEF_GRUPOS = {
   asistentes_min_1_sesion: { t: 'Asist. ≥1', center: true },
   respuestas: { t: 'Respuestas', center: true },
   estado_materia: { t: 'Estado', center: true },
-  alerta_cierre: { t: '', center: true },
+  alerta_cierre: { t: 'Gestión', center: true },
 };
 
 const GRUPOS_COL_DEF = [
@@ -425,6 +430,28 @@ function celdaGrupo_(f, key) {
   return def.fmt ? def.fmt(v) : String(v);
 }
 
+/** ID Grupo (Mapeo) — link a la hoja de la lista de clase (`listado_url`,
+ *  viene de asap_seguimiento_grupo). Si no hay lista, texto plano. */
+function CeldaIdGrupoMapeo({ f }) {
+  if (!f.id_grupo_mapeo) return '—';
+  if (!f.listado_url) return f.id_grupo_mapeo;
+  return (
+    <a href={f.listado_url} target="_blank" rel="noreferrer" className="text-accent-400 hover:text-accent-300" title="Abrir la lista de clase">
+      {f.id_grupo_mapeo}
+    </a>
+  );
+}
+
+/** Group ID — link a la ficha del grupo en el SIS de Kuepa. */
+function CeldaGroupId({ groupId }) {
+  if (!groupId) return '—';
+  return (
+    <a href={urlSisGrupo(groupId)} target="_blank" rel="noreferrer" className="text-accent-400 hover:text-accent-300 underline decoration-dotted underline-offset-2" title="Abrir en el SIS">
+      {groupId}
+    </a>
+  );
+}
+
 /** true si cada palabra de la consulta aparece (como subcadena) en el texto
  *  normalizado -- permite "mate fin" -> "Matemática Financiera". Mismo
  *  criterio que coincideBusqueda() de AsistenciaAprobacionPanel.jsx. */
@@ -444,6 +471,7 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   const [alertas, setAlertas] = useState([]); // doc_alertas_cierre (historial)
   const [alertaEnviando, setAlertaEnviando] = useState(null); // group_id en curso
   const [alertaMsg, setAlertaMsg] = useState(null); // { tipo, texto }
+  const [gestionGrupo, setGestionGrupo] = useState(null); // fila abierta en el modal de Gestión
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
@@ -536,6 +564,7 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
         respuestas: mapaRespuestas[claveRespuestas_(f.categoria_programa, f.mes_calificacion, f.materia)] || 0,
         cantidad_estudiantes_listas: mapaListas.get(f.group_id)?.cant ?? null,
         asistentes_min_1_sesion: mapaListas.get(f.group_id)?.asis ?? null,
+        listado_url: mapaListas.get(f.group_id)?.listaUrl ?? null,
         estado_materia: estadoMateria_(f.fecha_calendario_inicio, f.fecha_calendario_fin),
       })),
     [filasRaw, mapaRespuestas, mapaListas]
@@ -753,15 +782,30 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
               onToggleGrupoCol={toggleGrupoCol}
               dirIdx={dirIdx}
               alertasPorGrupo={alertasPorGrupo}
-              alertaEnviando={alertaEnviando}
-              onEnviarAlerta={onEnviarAlerta}
+              onAbrirGestion={setGestionGrupo}
             />
           ))}
           {combosVisibles.length > 0 && (
-            <SeccionCombinadosEvalDocente combos={combosVisibles} gruposCol={gruposCol} onToggleGrupoCol={toggleGrupoCol} dirIdx={dirIdx} />
+            <SeccionCombinadosEvalDocente
+              combos={combosVisibles}
+              gruposCol={gruposCol}
+              onToggleGrupoCol={toggleGrupoCol}
+              dirIdx={dirIdx}
+              alertasPorGrupo={alertasPorGrupo}
+              onAbrirGestion={setGestionGrupo}
+            />
           )}
-          <RegistroAlertasCierre alertas={alertas} />
         </div>
+      )}
+
+      {gestionGrupo && (
+        <ModalGestion
+          f={gestionGrupo}
+          dirIdx={dirIdx}
+          estadoAlerta={alertasPorGrupo?.get(gestionGrupo.group_id) || null}
+          onEnviado={async () => setAlertas(await fetchAlertasCierre().catch((prev) => prev || alertas))}
+          onClose={() => setGestionGrupo(null)}
+        />
       )}
     </section>
   );
@@ -891,7 +935,7 @@ function TooltipDocente({ nombre, dir }) {
  * miembro; las celdas iguales para toda la combinación van con rowSpan.
  * Solo lectura: se combina/desagrupa desde la app de Asistencia y Aprobación.
  */
-function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dirIdx }) {
+function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, onAbrirGestion }) {
   const totalCols = GRUPOS_COL_DEF.reduce((a, g) => a + (gruposCol.has(g.id) ? g.cols.length : 1), 0);
   return (
     <section className="rounded-2xl overflow-hidden border" style={{ borderColor: COMB_COLOR_ED + '66' }}>
@@ -906,7 +950,7 @@ function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dir
         <table className="w-full text-xs border-collapse whitespace-nowrap">
           <TheadGruposCategoria gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
           {combos.map((c) => (
-            <FilasComboCombinadoED key={c.id} c={c} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} totalCols={totalCols} dirIdx={dirIdx} />
+            <FilasComboCombinadoED key={c.id} c={c} gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} totalCols={totalCols} dirIdx={dirIdx} alertasPorGrupo={alertasPorGrupo} onAbrirGestion={onAbrirGestion} />
           ))}
         </table>
       </div>
@@ -914,7 +958,7 @@ function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dir
   );
 }
 
-function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirIdx }) {
+function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirIdx, alertasPorGrupo, onAbrirGestion }) {
   const ms = c.miembros || [];
   const m0 = ms[0] || {};
   const n = ms.length || 1;
@@ -967,12 +1011,16 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
                     {merged.mes_calificacion || '—'}
                   </span>
                 );
+              } else if (key === 'id_grupo_mapeo') {
+                contenido = <CeldaIdGrupoMapeo f={m} />;
+              } else if (key === 'group_id') {
+                contenido = <CeldaGroupId groupId={m.group_id} />;
               } else if (key === 'tutor_calendario') {
                 contenido = <TooltipDocente nombre={merged.tutor_calendario} dir={dirIdx} />;
               } else if (key === 'estado_materia') {
                 contenido = <PillEstadoMateria estado={m.estado_materia} />;
               } else if (key === 'alerta_cierre') {
-                contenido = <span className="text-slate-700">·</span>;
+                contenido = <BotonGestion f={m} estadoAlerta={alertasPorGrupo?.get(m.group_id) || null} onAbrir={onAbrirGestion} />;
               } else if (perMiembro) {
                 contenido = celdaGrupo_(m, key);
               } else {
@@ -1002,7 +1050,7 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
   );
 }
 
-function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, alertaEnviando, onEnviarAlerta }) {
+function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, onAbrirGestion }) {
   const color = COLOR_CATEGORIA[categoria] || '#5b7fff';
   const [fMateria, setFMateria] = useState('');
   const [fTutor, setFTutor] = useState('');
@@ -1091,8 +1139,7 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
                       onToggleGrupoCol={onToggleGrupoCol}
                       dirIdx={dirIdx}
                       alertasPorGrupo={alertasPorGrupo}
-                      alertaEnviando={alertaEnviando}
-                      onEnviarAlerta={onEnviarAlerta}
+                      onAbrirGestion={onAbrirGestion}
                     />
                   ))
                 )}
@@ -1207,47 +1254,236 @@ function PillEstadoMateria({ estado }) {
   );
 }
 
-/** Botón ⇒ para alertar al tutor cuando su materia YA CERRÓ y NO tiene
- *  ninguna respuesta de evaluación. Solo aparece en esas filas. */
-function BotonAlertaCierre({ f, dirIdx, estadoAlerta, enviando, onEnviar }) {
-  const elegible = f.estado_materia === 'cerro' && (f.respuestas || 0) === 0;
-  if (!elegible) return <span className="text-slate-700">·</span>;
+/** Situación de gestión de una fila:
+ *   'sin_respuestas'  → materia cerró y 0 respuestas
+ *   'insuficiente'    → materia cerró y 1..N_MINIMO_CONFIABLE-1 respuestas
+ *   null              → no hay nada que gestionar (aún en curso, o con respuestas suficientes) */
+function situacionGestion_(f) {
+  if (f.estado_materia !== 'cerro') return null;
+  const r = f.respuestas || 0;
+  if (r === 0) return 'sin_respuestas';
+  if (r < N_MINIMO_CONFIABLE) return 'insuficiente';
+  return null;
+}
+const GESTION_META = {
+  sin_respuestas: { txt: 'Sin respuestas de encuesta docente (materia cerrada)', color: '#f43f5e' },
+  insuficiente: { txt: 'Insuficiencia de respuestas evaluación docente', color: '#f59e0b' },
+};
 
-  const tutor = dirIdx?.porNombre?.get(normalizar(f.tutor_calendario || '')) || null;
-  const correo = tutor?.correo_institucional || '';
-
-  if (estadoAlerta === 'enviado' || estadoAlerta === 'registrada') {
-    return (
-      <span
-        className={'text-xs ' + (estadoAlerta === 'enviado' ? 'text-emerald-400' : 'text-amber-400')}
-        title={
-          estadoAlerta === 'enviado'
-            ? 'Alerta enviada al tutor'
-            : 'Alerta registrada — falta conectar el envío de correo en n8n'
-        }
-      >
-        {estadoAlerta === 'enviado' ? '✓ enviada' : '• registrada'}
-      </span>
-    );
-  }
+/** Botón "Gestión" — en TODAS las filas, con un look propio (pill sólida
+ *  índigo, distinto al resto de la tabla). Abre el modal de gestión. Si la
+ *  materia cerró y hay algo que atender (0 respuestas / insuficientes)
+ *  muestra un puntito de color. */
+function BotonGestion({ f, estadoAlerta, onAbrir }) {
+  const sit = situacionGestion_(f);
   return (
     <button
       type="button"
-      disabled={enviando}
-      onClick={() => onEnviar(f, correo)}
+      onClick={() => onAbrir(f)}
       title={
-        correo
-          ? `Enviar alerta al tutor (${correo}) — materia cerrada sin evaluaciones`
-          : 'No hay correo del tutor en el directorio — se registrará igual la alerta'
+        'Abrir gestión' +
+        (sit ? ' · ' + GESTION_META[sit].txt : '') +
+        (estadoAlerta ? ' · WhatsApp ' + (estadoAlerta === 'enviado' ? 'enviado' : 'registrado') : '')
       }
-      className="inline-flex items-center justify-center rounded-md border border-amber-700/60 bg-amber-950/30 px-2 py-1 text-xs font-semibold text-amber-300 hover:bg-amber-900/40 hover:border-amber-600 disabled:opacity-50 disabled:cursor-wait transition-colors"
+      className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide text-white shadow-sm ring-1 ring-inset ring-indigo-400/40 transition-transform hover:scale-[1.04] active:scale-95"
+      style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
     >
-      {enviando ? '…' : '⇒ alertar'}
+      Gestión
+      {sit && (
+        <span
+          className="w-1.5 h-1.5 rounded-full ring-1 ring-white/60"
+          style={{ backgroundColor: GESTION_META[sit].color }}
+        />
+      )}
+      {estadoAlerta && <span className="text-[9px] leading-none">{estadoAlerta === 'enviado' ? '✓' : '•'}</span>}
     </button>
   );
 }
 
-function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, alertaEnviando, onEnviarAlerta }) {
+/** Modal de gestión de una materia: datos del grupo + acciones (envían un
+ *  reporte por WhatsApp vía n8n → Meta Cloud API). */
+function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
+  const [enviando, setEnviando] = useState(null); // 'sin_respuestas' | 'insuficiente' | null
+  const [msg, setMsg] = useState(null); // { tipo:'ok'|'error', texto }
+  useEffect(() => {
+    const onEsc = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [onClose]);
+
+  const tutor = dirIdx?.porNombre?.get(normalizar(f.tutor_calendario || '')) || null;
+  const correo = tutor?.correo_institucional || '';
+  const sit = situacionGestion_(f);
+
+  // Link de la encuesta de evaluación docente que le corresponde a esta
+  // materia: se arma por CATEGORÍA + MES (no por grupo), igual que en la
+  // vista de links del panel.
+  const urlEncuesta =
+    f.categoria_programa && f.mes_calificacion
+      ? `${window.location.origin}/evaluar/${slug(f.categoria_programa)}/${slug(f.mes_calificacion)}`
+      : null;
+
+  async function enviarReporte(tipo) {
+    setEnviando(tipo);
+    setMsg(null);
+    try {
+      await enviarReporteGestion({
+        tipo,
+        group_id: f.group_id,
+        id_grupo_mapeo: f.id_grupo_mapeo,
+        categoria_programa: f.categoria_programa,
+        mes_calificacion: f.mes_calificacion,
+        materia: f.materia,
+        tutor_calendario: f.tutor_calendario,
+        cantidad_estudiantes_listas: f.cantidad_estudiantes_listas ?? null,
+        asistentes_min_1_sesion: f.asistentes_min_1_sesion ?? null,
+        respuestas: f.respuestas ?? 0,
+        fecha_calendario_inicio: f.fecha_calendario_inicio || null,
+        fecha_calendario_fin: f.fecha_calendario_fin || null,
+        listado_url: f.listado_url || null,
+        url_sis: urlSisGrupo(f.group_id),
+        url_encuesta: urlEncuesta,
+      });
+      setMsg({ tipo: 'ok', texto: `Reporte enviado por WhatsApp a ${WHATSAPP_DESTINO_PRUEBAS}.` });
+      onEnviado?.();
+    } catch (e) {
+      setMsg({ tipo: 'error', texto: 'No se pudo enviar: ' + (e.message || e) });
+    } finally {
+      setEnviando(null);
+    }
+  }
+
+  const Dato = ({ label, children }) => (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="text-sm text-slate-200">{children ?? '—'}</div>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[900] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-lg max-h-[88vh] overflow-y-auto rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-ink-700">
+          <div className="min-w-0">
+            <div className="text-[11px] uppercase tracking-wider text-slate-500">Gestión de la materia</div>
+            <div className="text-sm font-semibold text-slate-100 truncate">
+              {f.id_grupo_mapeo} · {f.materia}
+            </div>
+            <div className="text-xs text-slate-500">{f.categoria_programa} · {f.mes_calificacion}</div>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-100 text-lg leading-none -mt-1">×</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {sit && (
+            <div
+              className="rounded-lg border px-3 py-2 text-xs font-semibold"
+              style={{ borderColor: GESTION_META[sit].color + '80', color: GESTION_META[sit].color, backgroundColor: GESTION_META[sit].color + '14' }}
+            >
+              {GESTION_META[sit].txt}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+            <Dato label="Tutor">
+              {f.tutor_calendario || '—'}
+              {(tutor?.celular || correo) && (
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  {tutor?.celular && <div>📱 {tutor.celular}</div>}
+                  {correo && <div className="break-all">✉ {correo}</div>}
+                </div>
+              )}
+            </Dato>
+            <Dato label="Materia">{f.materia}</Dato>
+            <Dato label="Cant. est. listas">{f.cantidad_estudiantes_listas ?? '—'}</Dato>
+            <Dato label="Asist. ≥1">{f.asistentes_min_1_sesion ?? '—'}</Dato>
+            <Dato label="Respuestas">{f.respuestas ?? 0}</Dato>
+            <Dato label="Estado">{ESTADO_MATERIA_META[f.estado_materia]?.txt || '—'}</Dato>
+            <Dato label="Inicio">{formatearFechaDDMMYYYY(f.fecha_calendario_inicio) || '—'}</Dato>
+            <Dato label="Finalización">{formatearFechaDDMMYYYY(f.fecha_calendario_fin) || '—'}</Dato>
+            <Dato label="Lista de clase">
+              {f.listado_url ? (
+                <a href={f.listado_url} target="_blank" rel="noreferrer" className="text-accent-400 hover:text-accent-300 underline decoration-dotted underline-offset-2">
+                  Abrir lista →
+                </a>
+              ) : '—'}
+            </Dato>
+            <Dato label="Group ID">
+              <a href={urlSisGrupo(f.group_id)} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-accent-400 hover:text-accent-300 underline decoration-dotted underline-offset-2 break-all">
+                {f.group_id}
+              </a>
+            </Dato>
+          </div>
+
+          <div className="rounded-lg border border-ink-700 bg-ink-850/40 px-3 py-2">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+              Encuesta de evaluación docente · {f.categoria_programa} · {f.mes_calificacion}
+            </div>
+            {urlEncuesta ? (
+              <div className="flex items-center gap-2">
+                <a
+                  href={urlEncuesta}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 flex-1 text-xs text-accent-400 hover:text-accent-300 underline decoration-dotted underline-offset-2 break-all"
+                >
+                  {urlEncuesta}
+                </a>
+                <BotonCopiar valor={urlEncuesta} label="link" />
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500">—</div>
+            )}
+            <p className="text-[10px] text-slate-600 mt-1">El link es por carrera + mes (lo comparten todas las materias de esa carrera en ese mes).</p>
+          </div>
+
+          <div className="pt-3 border-t border-ink-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte por WhatsApp</div>
+              <div className="text-[10px] text-slate-500">→ {WHATSAPP_DESTINO_PRUEBAS} (pruebas)</div>
+            </div>
+            <button
+              type="button"
+              disabled={!!enviando}
+              onClick={() => enviarReporte('sin_respuestas')}
+              className={
+                'w-full rounded-md border px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-wait ' +
+                (sit === 'sin_respuestas'
+                  ? 'border-rose-600 bg-rose-950/40 text-rose-200 ring-1 ring-rose-700/50'
+                  : 'border-rose-800/60 bg-rose-950/20 text-rose-300 hover:bg-rose-950/40')
+              }
+            >
+              {enviando === 'sin_respuestas' ? 'Enviando…' : 'Sin respuestas de encuesta docente (materia cerrada)'}
+            </button>
+            <button
+              type="button"
+              disabled={!!enviando}
+              onClick={() => enviarReporte('insuficiente')}
+              className={
+                'w-full rounded-md border px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-wait ' +
+                (sit === 'insuficiente'
+                  ? 'border-amber-600 bg-amber-950/40 text-amber-200 ring-1 ring-amber-700/50'
+                  : 'border-amber-800/60 bg-amber-950/20 text-amber-300 hover:bg-amber-950/40')
+              }
+            >
+              {enviando === 'insuficiente' ? 'Enviando…' : 'Insuficiencia de respuestas evaluación docente'}
+            </button>
+            {msg && (
+              <div className={'text-xs ' + (msg.tipo === 'ok' ? 'text-emerald-300' : 'text-red-300')}>
+                {msg.texto}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, onAbrirGestion }) {
   return (
     <tr className="border-t border-ink-800 hover:bg-ink-850/50">
       {GRUPOS_COL_DEF.map((g) => {
@@ -1286,17 +1522,19 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPor
                   <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: colorDeMes(f.mes_calificacion) }} />
                   {f.mes_calificacion}
                 </span>
+              ) : key === 'id_grupo_mapeo' ? (
+                <CeldaIdGrupoMapeo f={f} />
+              ) : key === 'group_id' ? (
+                <CeldaGroupId groupId={f.group_id} />
               ) : key === 'tutor_calendario' ? (
                 <TooltipDocente nombre={f.tutor_calendario} dir={dirIdx} />
               ) : key === 'estado_materia' ? (
                 <PillEstadoMateria estado={f.estado_materia} />
               ) : key === 'alerta_cierre' ? (
-                <BotonAlertaCierre
+                <BotonGestion
                   f={f}
-                  dirIdx={dirIdx}
                   estadoAlerta={alertasPorGrupo?.get(f.group_id) || null}
-                  enviando={alertaEnviando === f.group_id}
-                  onEnviar={onEnviarAlerta}
+                  onAbrir={onAbrirGestion}
                 />
               ) : (
                 celdaGrupo_(f, key)
@@ -1312,26 +1550,61 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPor
 /** Historial de alertas de cierre enviadas (tabla doc_alertas_cierre).
  *  Colapsable, arranca cerrado. 2026-09-10, a pedido del usuario:
  *  "seria bueno poder tener un registro en la app de eso". */
-function RegistroAlertasCierre({ alertas }) {
-  const [abierto, setAbierto] = useState(false);
-  if (!alertas || alertas.length === 0) return null;
+/** Vista propia "Alertas de cierre" (2026-09-11, a pedido del usuario: "las
+ *  alertas deberiamos dejarlas en otra seccion... debajo de ranking
+ *  docente"). Antes vivía como un panel colapsable al final de la tabla de
+ *  Grupos; ahora es su propia pestaña en el nav, con fetch propio (no
+ *  depende de haber entrado antes a Grupos) y columna de Fecha/Hora
+ *  separadas -- "seria tambien bueno conocer la hora del envio". */
+function VistaAlertasCierre() {
+  const [alertas, setAlertas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState(null);
+
+  async function cargar() {
+    setCargando(true);
+    setError(null);
+    try {
+      setAlertas(await fetchAlertasCierre());
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setCargando(false);
+    }
+  }
+
+  useEffect(() => { cargar(); }, []);
+
   return (
-    <section className="rounded-2xl overflow-hidden border border-ink-700">
-      <button
-        type="button"
-        onClick={() => setAbierto((v) => !v)}
-        className="w-full flex items-center gap-3 px-5 py-3 bg-ink-900 hover:bg-ink-850 transition-colors"
-      >
-        <span className={'text-sm leading-none transition-transform text-slate-400 ' + (abierto ? 'rotate-90' : '')}>▸</span>
-        <span className="text-sm font-semibold text-slate-200">Alertas de cierre enviadas</span>
-        <span className="text-xs font-semibold rounded-full px-2 py-0.5 bg-ink-700 text-slate-300">{alertas.length}</span>
-      </button>
-      {abierto && (
-        <div className="overflow-x-auto bg-ink-900 border-t border-ink-800">
+    <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-100">Alertas de cierre</h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Materias que ya cerraron sin ninguna respuesta de evaluación docente y se avisó al tutor -- {alertas.length} en total.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={cargar}
+          className="text-xs text-slate-300 border border-ink-600 rounded-md px-2.5 py-1.5 hover:bg-ink-700 transition-colors shrink-0"
+        >
+          Actualizar
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>}
+      {cargando ? (
+        <p className="text-xs text-slate-400">Cargando…</p>
+      ) : alertas.length === 0 ? (
+        <p className="text-xs text-slate-500">Todavía no se ha enviado ninguna alerta.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-ink-800">
           <table className="w-full text-xs whitespace-nowrap">
             <thead className="bg-ink-850 text-[11px] uppercase tracking-wider text-slate-400">
               <tr>
                 <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Hora</th>
                 <th className="px-3 py-2 text-left">Materia</th>
                 <th className="px-3 py-2 text-left">Categoría · Mes</th>
                 <th className="px-3 py-2 text-left">Tutor</th>
@@ -1342,23 +1615,34 @@ function RegistroAlertasCierre({ alertas }) {
               </tr>
             </thead>
             <tbody className="text-slate-300">
-              {alertas.map((a) => (
-                <tr key={a.id} className="border-t border-ink-800">
-                  <td className="px-3 py-1.5 text-slate-400">
-                    {a.creado_en ? new Date(a.creado_en).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
-                  </td>
-                  <td className="px-3 py-1.5">{a.materia || '—'}</td>
-                  <td className="px-3 py-1.5 text-slate-400">{[a.categoria_programa, a.mes_calificacion].filter(Boolean).join(' · ') || '—'}</td>
-                  <td className="px-3 py-1.5">{a.tutor_calendario || '—'}</td>
-                  <td className="px-3 py-1.5">{a.canal === 'whatsapp' ? '💬 WhatsApp' : '✉ correo'}</td>
-                  <td className="px-3 py-1.5 text-slate-400">{a.destinatario || '—'}</td>
-                  <td className={'px-3 py-1.5 font-medium ' + (a.estado === 'enviado' ? 'text-emerald-300' : 'text-red-300')}>
-                    {a.estado === 'enviado' ? 'Enviada' : 'Error'}
-                    {a.detalle ? <span className="text-slate-500 font-normal"> · {a.detalle}</span> : null}
-                  </td>
-                  <td className="px-3 py-1.5 text-slate-500">{a.enviado_por || '—'}</td>
-                </tr>
-              ))}
+              {alertas.map((a) => {
+                const ts = a.creado_en ? new Date(a.creado_en) : null;
+                return (
+                  <tr key={a.id} className="border-t border-ink-800">
+                    <td className="px-3 py-1.5 text-slate-400">
+                      {ts ? ts.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                    </td>
+                    <td className="px-3 py-1.5 text-slate-400">
+                      {ts ? ts.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                    </td>
+                    <td className="px-3 py-1.5">{a.materia || '—'}</td>
+                    <td className="px-3 py-1.5 text-slate-400">{[a.categoria_programa, a.mes_calificacion].filter(Boolean).join(' · ') || '—'}</td>
+                    <td className="px-3 py-1.5">{a.tutor_calendario || '—'}</td>
+                    <td className="px-3 py-1.5">{a.canal === 'whatsapp' ? '💬 WhatsApp' : '✉ correo'}</td>
+                    <td className="px-3 py-1.5 text-slate-400">{a.destinatario || '—'}</td>
+                    <td
+                      className={
+                        'px-3 py-1.5 font-medium ' +
+                        (a.estado === 'enviado' ? 'text-emerald-300' : a.estado === 'registrada' ? 'text-amber-300' : 'text-red-300')
+                      }
+                    >
+                      {a.estado === 'enviado' ? 'Enviada' : a.estado === 'registrada' ? 'Registrada' : 'Error'}
+                      {a.detalle ? <span className="text-slate-500 font-normal"> · {a.detalle}</span> : null}
+                    </td>
+                    <td className="px-3 py-1.5 text-slate-500">{a.enviado_por || '—'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
