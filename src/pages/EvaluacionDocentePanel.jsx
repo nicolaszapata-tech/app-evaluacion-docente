@@ -1312,12 +1312,6 @@ function textoWhatsappGestion_(tipo, f, urlEncuesta) {
     partes.push(urlSis);
     partes.push('');
   }
-  const asuntoCorreo = `Evaluación docente pendiente - ${materia}`;
-  const cuerpoCorreo = `Hola,\n\nLes recuerdo completar la evaluación docente de la materia "${materia}" (periodo ${periodo}) lo antes posible. Aquí el link:\n${urlEncuesta || ''}\n\n¡Gracias!`;
-  const mailto = `mailto:?subject=${encodeURIComponent(asuntoCorreo)}&body=${encodeURIComponent(cuerpoCorreo)}`;
-  partes.push('✉️ Tip: si quieres escribirles a tus estudiantes por correo, abre este link y solo agrega sus correos (el asunto y el mensaje ya quedan listos):');
-  partes.push(mailto);
-  partes.push('');
   partes.push('¡Gracias por tu gestión! 🙌');
   return partes.join('\n');
 }
