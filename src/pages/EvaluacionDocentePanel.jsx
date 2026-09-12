@@ -18,7 +18,6 @@ import {
   fetchCantEstListasPorGrupo,
   urlSisGrupo,
   enviarReporteGestion,
-  EMAIL_DESTINO_PRUEBAS,
   enviarAlertaCierre,
   fetchAlertasCierre,
   formatearFechaDDMMYYYY,
@@ -1387,18 +1386,23 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
   }
 
   async function enviarReporte(tipo) {
+    if (!correo) {
+      setMsg({ tipo: 'error', texto: 'No se encontró correo institucional para este tutor en el directorio — no se pudo enviar.' });
+      return;
+    }
     setEnviando(tipo);
     setMsg(null);
     try {
       await enviarReporteGestion({
         tipo,
+        destino: correo,
         group_id: f.group_id,
         id_grupo_mapeo: f.id_grupo_mapeo,
         categoria_programa: f.categoria_programa,
         mes_calificacion: f.mes_calificacion,
         materia: f.materia,
         tutor_calendario: f.tutor_calendario,
-        correo_tutor: correo || null,
+        correo_tutor: correo,
         cantidad_estudiantes_listas: f.cantidad_estudiantes_listas ?? null,
         asistentes_min_1_sesion: f.asistentes_min_1_sesion ?? null,
         respuestas: f.respuestas ?? 0,
@@ -1408,7 +1412,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
         url_sis: urlSisGrupo(f.group_id),
         url_encuesta: urlEncuesta,
       });
-      setMsg({ tipo: 'ok', texto: `Reporte enviado por correo a ${EMAIL_DESTINO_PRUEBAS}.` });
+      setMsg({ tipo: 'ok', texto: `Reporte enviado por correo a ${correo}.` });
       onEnviado?.();
     } catch (e) {
       setMsg({ tipo: 'error', texto: 'No se pudo enviar: ' + (e.message || e) });
@@ -1539,7 +1543,9 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
               </div>
             </div>
             {canal === 'correo' && (
-              <div className="text-[10px] text-slate-500 text-right -mt-1">→ {EMAIL_DESTINO_PRUEBAS} (pruebas)</div>
+              <div className={'text-[10px] text-right -mt-1 ' + (correo ? 'text-slate-500' : 'text-rose-400')}>
+                {correo ? `→ ${correo}` : '⚠ sin correo del tutor en el directorio'}
+              </div>
             )}
             {canal === 'whatsapp' && (
               <div className="text-[10px] text-slate-500 -mt-1">
@@ -1547,8 +1553,10 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
               </div>
             )}
             {canal === 'ambos' && (
-              <div className="text-[10px] text-slate-500 -mt-1">
-                Envía el correo automático (→ {EMAIL_DESTINO_PRUEBAS}, pruebas) y además genera el texto de WhatsApp para copiar y reenviar.
+              <div className={'text-[10px] -mt-1 ' + (correo ? 'text-slate-500' : 'text-rose-400')}>
+                {correo
+                  ? `Envía el correo automático (→ ${correo}) y además genera el texto de WhatsApp para copiar y reenviar.`
+                  : '⚠ sin correo del tutor en el directorio — solo se generará el texto de WhatsApp.'}
               </div>
             )}
             <button
