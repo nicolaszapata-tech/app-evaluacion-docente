@@ -1378,6 +1378,11 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
       setPlantillaWA({ tipo, texto: textoWhatsappGestion_(tipo, f, urlEncuesta) });
       return;
     }
+    if (canal === 'ambos') {
+      setPlantillaWA({ tipo, texto: textoWhatsappGestion_(tipo, f, urlEncuesta) });
+      enviarReporte(tipo);
+      return;
+    }
     enviarReporte(tipo);
   }
 
@@ -1452,7 +1457,12 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
               {f.tutor_calendario || '—'}
               {(tutor?.celular || correo) && (
                 <div className="text-[11px] text-slate-400 mt-0.5">
-                  {tutor?.celular && <div>📱 {tutor.celular}</div>}
+                  {tutor?.celular && (
+                    <div className="flex items-center gap-1">
+                      <span>📱 {tutor.celular}</span>
+                      <BotonCopiar valor={tutor.celular} label="número" />
+                    </div>
+                  )}
                   {correo && <div className="break-all">✉ {correo}</div>}
                 </div>
               )}
@@ -1502,7 +1512,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
         </div>
 
         <div className="space-y-2 md:border-l md:border-ink-700 md:pl-5">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte</div>
               <div className="inline-flex rounded-md border border-ink-700 overflow-hidden text-[11px]">
                 <button
@@ -1519,6 +1529,13 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
                 >
                   💬 WhatsApp
                 </button>
+                <button
+                  type="button"
+                  onClick={() => { setCanal('ambos'); setMsg(null); }}
+                  className={'px-2.5 py-1 font-semibold ' + (canal === 'ambos' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-ink-800')}
+                >
+                  ✉+💬 Ambos
+                </button>
               </div>
             </div>
             {canal === 'correo' && (
@@ -1527,6 +1544,11 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
             {canal === 'whatsapp' && (
               <div className="text-[10px] text-slate-500 -mt-1">
                 Genera el texto para copiar y reenviarlo tú mismo al grupo/chat de WhatsApp del tutor — no se envía automático.
+              </div>
+            )}
+            {canal === 'ambos' && (
+              <div className="text-[10px] text-slate-500 -mt-1">
+                Envía el correo automático (→ {EMAIL_DESTINO_PRUEBAS}, pruebas) y además genera el texto de WhatsApp para copiar y reenviar.
               </div>
             )}
             <button
@@ -1560,7 +1582,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
                 {msg.texto}
               </div>
             )}
-            {canal === 'whatsapp' && plantillaWA && (
+            {(canal === 'whatsapp' || canal === 'ambos') && plantillaWA && (
               <div className="rounded-lg border border-emerald-800/60 bg-emerald-950/20 p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="text-[10px] uppercase tracking-wider text-emerald-400">Plantilla lista para enviar</div>
