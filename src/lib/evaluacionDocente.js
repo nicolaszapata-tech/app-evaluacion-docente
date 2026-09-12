@@ -281,7 +281,7 @@ export async function enviarReporteGestion(payload) {
 export async function fetchAlertasCierre() {
   const { data, error } = await supabase
     .from('doc_alertas_cierre')
-    .select('id, group_id, id_grupo_mapeo, categoria_programa, mes_calificacion, materia, tutor_calendario, canal, tipo, destinatario, enviado_por, estado, detalle, creado_en')
+    .select('id, group_id, id_grupo_mapeo, categoria_programa, mes_calificacion, materia, tutor_calendario, canal, tipo, destinatario, enviado_por, estado, detalle, respuestas_antes, creado_en')
     .order('creado_en', { ascending: false });
   if (error) throw error;
   return data || [];

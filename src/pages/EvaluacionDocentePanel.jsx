@@ -1383,6 +1383,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }
       canal: 'whatsapp',
       tipo,
       destinatario: tutor?.celular || null,
+      respuestas_antes: f.respuestas ?? 0,
     })
       .then(() => onEnviado?.())
       .catch(() => {});
@@ -1425,6 +1426,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }
         cantidad_estudiantes_listas: f.cantidad_estudiantes_listas ?? null,
         asistentes_min_1_sesion: f.asistentes_min_1_sesion ?? null,
         respuestas: f.respuestas ?? 0,
+        respuestas_antes: f.respuestas ?? 0,
         fecha_calendario_inicio: f.fecha_calendario_inicio || null,
         fecha_calendario_fin: f.fecha_calendario_fin || null,
         listado_url: f.listado_url || null,
@@ -1486,6 +1488,12 @@ function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }
                         {a.creado_en ? new Date(a.creado_en).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
                       </div>
                       {a.destinatario && <div className="text-[10px] text-slate-500 truncate">{a.destinatario}</div>}
+                      {a.respuestas_antes !== null && a.respuestas_antes !== undefined && (
+                        <div className="text-[10px] mt-0.5">
+                          Respuestas: {a.respuestas_antes} → <b className={(f.respuestas ?? 0) > a.respuestas_antes ? 'text-emerald-400' : 'text-slate-400'}>{f.respuestas ?? 0}</b>
+                          {(f.respuestas ?? 0) > a.respuestas_antes && ' ↑'}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
