@@ -18,7 +18,7 @@ import {
   fetchCantEstListasPorGrupo,
   urlSisGrupo,
   enviarReporteGestion,
-  WHATSAPP_DESTINO_PRUEBAS,
+  EMAIL_DESTINO_PRUEBAS,
   enviarAlertaCierre,
   fetchAlertasCierre,
   formatearFechaDDMMYYYY,
@@ -1335,6 +1335,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
         mes_calificacion: f.mes_calificacion,
         materia: f.materia,
         tutor_calendario: f.tutor_calendario,
+        correo_tutor: correo || null,
         cantidad_estudiantes_listas: f.cantidad_estudiantes_listas ?? null,
         asistentes_min_1_sesion: f.asistentes_min_1_sesion ?? null,
         respuestas: f.respuestas ?? 0,
@@ -1344,7 +1345,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
         url_sis: urlSisGrupo(f.group_id),
         url_encuesta: urlEncuesta,
       });
-      setMsg({ tipo: 'ok', texto: `Reporte enviado por WhatsApp a ${WHATSAPP_DESTINO_PRUEBAS}.` });
+      setMsg({ tipo: 'ok', texto: `Reporte enviado por correo a ${EMAIL_DESTINO_PRUEBAS}.` });
       onEnviado?.();
     } catch (e) {
       setMsg({ tipo: 'error', texto: 'No se pudo enviar: ' + (e.message || e) });
@@ -1442,8 +1443,8 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
 
           <div className="pt-3 border-t border-ink-700 space-y-2">
             <div className="flex items-center justify-between">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte por WhatsApp</div>
-              <div className="text-[10px] text-slate-500">→ {WHATSAPP_DESTINO_PRUEBAS} (pruebas)</div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte por correo</div>
+              <div className="text-[10px] text-slate-500">→ {EMAIL_DESTINO_PRUEBAS} (pruebas)</div>
             </div>
             <button
               type="button"

@@ -257,18 +257,19 @@ export async function enviarAlertaCierre(payload) {
   return llamarPanel_({ accion: 'alerta_cierre', canal: 'email', ...payload });
 }
 
-/** Reporte de gestión de una materia por WhatsApp. Durante las pruebas el
- *  destino es un número fijo de control; en producción irá al celular del
- *  tutor. `tipo` = 'sin_respuestas' | 'insuficiente' | 'otro'. n8n arma el
- *  texto, lo manda por la Cloud API de Meta y registra la fila en
- *  doc_alertas_cierre (canal='whatsapp'). */
-export const WHATSAPP_DESTINO_PRUEBAS = '+573193989886';
+/** Reporte de gestión de una materia por correo. Durante las pruebas el
+ *  destino es un correo fijo de control; en producción irá al correo
+ *  institucional real del tutor (payload.correo_tutor, resuelto en el modal
+ *  vía el directorio de tutores). `tipo` = 'sin_respuestas' | 'insuficiente'
+ *  | 'otro'. n8n arma el texto, lo manda por Gmail (OAuth2) y registra la
+ *  fila en doc_alertas_cierre (canal='email'). */
+export const EMAIL_DESTINO_PRUEBAS = 'nicolas.zapata@lanuevaamerica.edu.co';
 
 export async function enviarReporteGestion(payload) {
   return llamarPanel_({
     accion: 'reporte_gestion',
-    canal: 'whatsapp',
-    destino: WHATSAPP_DESTINO_PRUEBAS,
+    canal: 'email',
+    destino: EMAIL_DESTINO_PRUEBAS,
     ...payload,
   });
 }
