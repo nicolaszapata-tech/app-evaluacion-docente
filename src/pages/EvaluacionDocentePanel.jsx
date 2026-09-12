@@ -1278,16 +1278,23 @@ function textoWhatsappGestion_(tipo, f, urlEncuesta) {
   const periodo = `${formatearFechaDDMMYYYY(f.fecha_calendario_inicio) || 's/f'} al ${formatearFechaDDMMYYYY(f.fecha_calendario_fin) || 's/f'}`;
   const asistieron = f.asistentes_min_1_sesion ?? 0;
   const respuestas = f.respuestas ?? 0;
+  const cantListas = f.cantidad_estudiantes_listas ?? null;
   const nombreTutor = (f.tutor_calendario || '').trim();
+  const materia = f.materia || 'la materia';
+  const urlSis = urlSisGrupo(f.group_id);
   const partes = [];
   partes.push(nombreTutor ? `Hola *${nombreTutor}* 👋` : 'Hola 👋');
   partes.push('');
   if (tipo === 'sin_respuestas') {
-    partes.push(`🔴 Tu materia *${f.materia || 'la materia'}* (${periodo}) ya cerró y, según nuestros reportes, *ningún estudiante* completó la evaluación docente, aunque ${asistieron} sí asistieron a clase.`);
+    partes.push(`🔴 Tu materia *${materia}* (${periodo}) ya cerró y, según nuestros reportes, *ningún estudiante* completó la evaluación docente.`);
     partes.push('');
-    partes.push('Necesitamos que actúes lo antes posible: comparte con tus estudiantes el link de la evaluación y recuérdales completarla hoy mismo:');
+    partes.push(
+      `El grupo, según el listado asignado, tiene aproximadamente ${cantListas ?? '—'} estudiantes, de los cuales ${asistieron} sí asistieron a clase. Necesitamos que actúes lo antes posible:`
+    );
   } else if (tipo === 'insuficiente') {
-    partes.push(`🟠 En tu materia *${f.materia || 'la materia'}* (${periodo}) solo ${respuestas} de ${asistieron} estudiantes que asistieron a clase completaron la evaluación docente — son muy pocas respuestas para tener una lectura confiable.`);
+    partes.push(
+      `🟠 En tu materia *${materia}* (${periodo}), de un grupo de aproximadamente ${cantListas ?? '—'} estudiantes, ${asistieron} asistieron a clase y solo ${respuestas} completaron la evaluación docente — son muy pocas respuestas para tener una lectura confiable.`
+    );
     partes.push('');
     partes.push('Ayúdanos recordándole a tus demás estudiantes completarla lo antes posible:');
   } else {
@@ -1296,10 +1303,21 @@ function textoWhatsappGestion_(tipo, f, urlEncuesta) {
   if (urlEncuesta) partes.push(urlEncuesta);
   partes.push('');
   if (f.listado_url) {
-    partes.push('Aquí tienes la lista de clase para saber a quiénes escribir:');
+    partes.push('📋 Estas son tus listas de clase:');
     partes.push(f.listado_url);
     partes.push('');
   }
+  if (urlSis) {
+    partes.push('🖥️ Este es tu grupo en el SIS:');
+    partes.push(urlSis);
+    partes.push('');
+  }
+  const asuntoCorreo = `Evaluación docente pendiente - ${materia}`;
+  const cuerpoCorreo = `Hola,\n\nLes recuerdo completar la evaluación docente de la materia "${materia}" (periodo ${periodo}) lo antes posible. Aquí el link:\n${urlEncuesta || ''}\n\n¡Gracias!`;
+  const mailto = `mailto:?subject=${encodeURIComponent(asuntoCorreo)}&body=${encodeURIComponent(cuerpoCorreo)}`;
+  partes.push('✉️ Tip: si quieres escribirles a tus estudiantes por correo, abre este link y solo agrega sus correos (el asunto y el mensaje ya quedan listos):');
+  partes.push(mailto);
+  partes.push('');
   partes.push('¡Gracias por tu gestión! 🙌');
   return partes.join('\n');
 }
@@ -1410,7 +1428,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
   return (
     <div className="fixed inset-0 z-[900] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-lg max-h-[88vh] overflow-y-auto rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl"
+        className="w-full max-w-4xl max-h-[88vh] overflow-y-auto rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-ink-700">
@@ -1424,7 +1442,8 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-100 text-lg leading-none -mt-1">×</button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-5 grid grid-cols-1 md:grid-cols-[1fr_300px] gap-5">
+        <div className="space-y-4 min-w-0">
           {sit && (
             <div
               className="rounded-lg border px-3 py-2 text-xs font-semibold"
@@ -1486,8 +1505,9 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
             )}
             <p className="text-[10px] text-slate-600 mt-1">El link es por carrera + mes (lo comparten todas las materias de esa carrera en ese mes).</p>
           </div>
+        </div>
 
-          <div className="pt-3 border-t border-ink-700 space-y-2">
+        <div className="space-y-2 md:border-l md:border-ink-700 md:pl-5">
             <div className="flex items-center justify-between">
               <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte</div>
               <div className="inline-flex rounded-md border border-ink-700 overflow-hidden text-[11px]">
@@ -1563,7 +1583,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
                 </a>
               </div>
             )}
-          </div>
+        </div>
         </div>
       </div>
     </div>
