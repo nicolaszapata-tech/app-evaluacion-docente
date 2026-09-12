@@ -247,12 +247,13 @@ export async function togglearMesActivo(mes, activo) {
   return llamarPanel_({ accion: 'toggle_mes', mes, activo });
 }
 
-/** Alerta a un tutor cuya materia YA CERRÓ y NO tiene ninguna respuesta de
- *  evaluación docente -- 2026-09-10, a pedido del usuario (botón ⇒ en la
- *  tabla de Grupos). Va por /api/panel -> webhook de n8n (accion=
- *  alerta_cierre): n8n manda el correo y registra la fila en
- *  doc_alertas_cierre. `canal` = 'email' hoy; 'whatsapp' queda contemplado
- *  para cuando exista el bot. Devuelve { ok, id, estado, detalle }. */
+/** Registra en doc_alertas_cierre una entrada de historial para el grupo --
+ *  usada hoy para dejar constancia de que se generó una plantilla de
+ *  WhatsApp (canal='whatsapp', estado='plantilla_generada') desde el modal
+ *  de Gestión, para que el panel muestre "ya se generó/envió esto antes" y
+ *  no se le repita el mismo mensaje a un tutor sin darse cuenta. Va por
+ *  /api/panel -> webhook de n8n (accion=alerta_cierre), que solo inserta la
+ *  fila (no envía nada). Devuelve { ok, id, estado, detalle }. */
 export async function enviarAlertaCierre(payload) {
   return llamarPanel_({ accion: 'alerta_cierre', canal: 'email', ...payload });
 }
@@ -280,7 +281,7 @@ export async function enviarReporteGestion(payload) {
 export async function fetchAlertasCierre() {
   const { data, error } = await supabase
     .from('doc_alertas_cierre')
-    .select('id, group_id, id_grupo_mapeo, categoria_programa, mes_calificacion, materia, tutor_calendario, canal, destinatario, enviado_por, estado, detalle, creado_en')
+    .select('id, group_id, id_grupo_mapeo, categoria_programa, mes_calificacion, materia, tutor_calendario, canal, tipo, destinatario, enviado_por, estado, detalle, creado_en')
     .order('creado_en', { ascending: false });
   if (error) throw error;
   return data || [];

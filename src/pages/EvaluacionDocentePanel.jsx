@@ -802,6 +802,7 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
           f={gestionGrupo}
           dirIdx={dirIdx}
           estadoAlerta={alertasPorGrupo?.get(gestionGrupo.group_id) || null}
+          historial={alertas.filter((a) => a.group_id === gestionGrupo.group_id)}
           onEnviado={async () => setAlertas(await fetchAlertasCierre().catch((prev) => prev || alertas))}
           onClose={() => setGestionGrupo(null)}
         />
@@ -1348,7 +1349,7 @@ function BotonGestion({ f, estadoAlerta, onAbrir }) {
 /** Modal de gestión de una materia: datos del grupo + acciones. Canal
  *  "Correo" envía automático (n8n → Gmail); canal "WhatsApp" solo genera el
  *  texto para copiar/reenviar manualmente (sin envío por API). */
-function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
+function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }) {
   const [enviando, setEnviando] = useState(null); // 'sin_respuestas' | 'insuficiente' | null
   const [msg, setMsg] = useState(null); // { tipo:'ok'|'error', texto }
   const [canal, setCanal] = useState('correo'); // 'correo' | 'whatsapp'
@@ -1371,14 +1372,32 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
       ? `${window.location.origin}/evaluar/${slug(f.categoria_programa)}/${slug(f.mes_calificacion)}`
       : null;
 
+  function registrarPlantillaWA(tipo) {
+    enviarAlertaCierre({
+      group_id: f.group_id,
+      id_grupo_mapeo: f.id_grupo_mapeo,
+      categoria_programa: f.categoria_programa,
+      mes_calificacion: f.mes_calificacion,
+      materia: f.materia,
+      tutor_calendario: f.tutor_calendario,
+      canal: 'whatsapp',
+      tipo,
+      destinatario: tutor?.celular || null,
+    })
+      .then(() => onEnviado?.())
+      .catch(() => {});
+  }
+
   function manejarClicTipo(tipo) {
     if (canal === 'whatsapp') {
       setMsg(null);
       setPlantillaWA({ tipo, texto: textoWhatsappGestion_(tipo, f, urlEncuesta) });
+      registrarPlantillaWA(tipo);
       return;
     }
     if (canal === 'ambos') {
       setPlantillaWA({ tipo, texto: textoWhatsappGestion_(tipo, f, urlEncuesta) });
+      registrarPlantillaWA(tipo);
       enviarReporte(tipo);
       return;
     }
@@ -1516,6 +1535,32 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
         </div>
 
         <div className="space-y-2 md:border-l md:border-ink-700 md:pl-5">
+            {historial && historial.length > 0 && (
+              <div className="rounded-lg border border-ink-700 bg-ink-850/40 p-2.5 space-y-1.5 max-h-36 overflow-y-auto">
+                <div className="text-[10px] uppercase tracking-wider text-slate-500">
+                  Historial de este grupo ({historial.length})
+                </div>
+                {historial.map((a) => {
+                  const tipoTxt = a.tipo === 'sin_respuestas' ? 'Sin respuestas' : a.tipo === 'insuficiente' ? 'Insuficiente' : (a.tipo || 'Gestión');
+                  const estadoTxt = a.estado === 'enviado' ? 'enviado' : a.estado === 'error' ? 'error' : a.estado === 'plantilla_generada' ? 'plantilla generada' : (a.estado || '—');
+                  const estadoColor = a.estado === 'enviado' ? 'text-emerald-400' : a.estado === 'error' ? 'text-red-400' : 'text-slate-400';
+                  return (
+                    <div key={a.id} className="flex items-start gap-1.5 text-[11px] text-slate-300">
+                      <span className="mt-px">{a.canal === 'whatsapp' ? '💬' : '✉'}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate">
+                          {tipoTxt} · <span className={estadoColor}>{estadoTxt}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate">
+                          {a.creado_en ? new Date(a.creado_en).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                          {a.destinatario ? ' · ' + a.destinatario : ''}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte</div>
               <div className="inline-flex rounded-md border border-ink-700 overflow-hidden text-[11px]">
