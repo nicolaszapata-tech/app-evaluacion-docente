@@ -1746,6 +1746,7 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPor
  *  separadas -- "seria tambien bueno conocer la hora del envio". */
 function VistaAlertasCierre() {
   const [alertas, setAlertas] = useState([]);
+  const [crudo, setCrudo] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
 
@@ -1753,7 +1754,12 @@ function VistaAlertasCierre() {
     setCargando(true);
     setError(null);
     try {
-      setAlertas(await fetchAlertasCierre());
+      const [al, cr] = await Promise.all([
+        fetchAlertasCierre(),
+        fetchStatsYCrudo().then((r) => r.crudo || []).catch(() => []),
+      ]);
+      setAlertas(al);
+      setCrudo(cr);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -1762,6 +1768,20 @@ function VistaAlertasCierre() {
   }
 
   useEffect(() => { cargar(); }, []);
+
+  // Igual que en TablaGrupos: nº actual de respuestas de evaluación docente
+  // por categoría+mes+materia -- para comparar contra respuestas_antes y ver
+  // si la alerta/plantilla tuvo efecto.
+  const mapaRespuestasAhora = useMemo(() => {
+    const m = {};
+    (crudo || []).forEach((grupo) => {
+      (grupo.filas || []).forEach((fila) => {
+        const k = claveRespuestas_(grupo.categoria_programa, grupo.mes_calificacion, fila.materia);
+        m[k] = (m[k] || 0) + 1;
+      });
+    });
+    return m;
+  }, [crudo]);
 
   return (
     <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-4">
@@ -1799,12 +1819,14 @@ function VistaAlertasCierre() {
                 <th className="px-3 py-2 text-left">Canal</th>
                 <th className="px-3 py-2 text-left">Destinatario</th>
                 <th className="px-3 py-2 text-left">Estado</th>
+                <th className="px-3 py-2 text-left">Respuestas</th>
                 <th className="px-3 py-2 text-left">Enviada por</th>
               </tr>
             </thead>
             <tbody className="text-slate-300">
               {alertas.map((a) => {
                 const ts = a.creado_en ? new Date(a.creado_en) : null;
+                const respuestasAhora = mapaRespuestasAhora[claveRespuestas_(a.categoria_programa, a.mes_calificacion, a.materia)] || 0;
                 return (
                   <tr key={a.id} className="border-t border-ink-800">
                     <td className="px-3 py-1.5 text-slate-400">
@@ -1821,11 +1843,19 @@ function VistaAlertasCierre() {
                     <td
                       className={
                         'px-3 py-1.5 font-medium ' +
-                        (a.estado === 'enviado' ? 'text-emerald-300' : a.estado === 'registrada' ? 'text-amber-300' : 'text-red-300')
+                        (a.estado === 'enviado' ? 'text-emerald-300' : (a.estado === 'registrada' || a.estado === 'plantilla_generada') ? 'text-amber-300' : 'text-red-300')
                       }
                     >
-                      {a.estado === 'enviado' ? 'Enviada' : a.estado === 'registrada' ? 'Registrada' : 'Error'}
+                      {a.estado === 'enviado' ? 'Enviada' : a.estado === 'registrada' ? 'Registrada' : a.estado === 'plantilla_generada' ? 'Plantilla generada' : 'Error'}
                       {a.detalle ? <span className="text-slate-500 font-normal"> · {a.detalle}</span> : null}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      {a.respuestas_antes !== null && a.respuestas_antes !== undefined ? (
+                        <>
+                          {a.respuestas_antes} → <b className={respuestasAhora > a.respuestas_antes ? 'text-emerald-300' : 'text-slate-300'}>{respuestasAhora}</b>
+                          {respuestasAhora > a.respuestas_antes && ' ↑'}
+                        </>
+                      ) : '—'}
                     </td>
                     <td className="px-3 py-1.5 text-slate-500">{a.enviado_por || '—'}</td>
                   </tr>
