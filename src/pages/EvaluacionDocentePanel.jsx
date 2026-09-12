@@ -1450,7 +1450,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }
   return (
     <div className="fixed inset-0 z-[900] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-4xl max-h-[88vh] overflow-y-auto rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl"
+        className="w-full max-w-6xl max-h-[88vh] overflow-y-auto rounded-2xl border border-ink-600 bg-ink-900 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-ink-700">
@@ -1464,8 +1464,38 @@ function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-100 text-lg leading-none -mt-1">×</button>
         </div>
 
-        <div className="p-5 grid grid-cols-1 md:grid-cols-[1fr_300px] gap-5">
-        <div className="space-y-4 min-w-0">
+        <div className="p-5 grid grid-cols-1 md:grid-cols-[220px_1fr_300px] gap-5">
+        <div className="order-3 md:order-1 md:border-r md:border-ink-700 md:pr-5">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">
+            Historial de este grupo {historial && historial.length > 0 ? `(${historial.length})` : ''}
+          </div>
+          {historial && historial.length > 0 ? (
+            <div className="space-y-1.5 max-h-[420px] md:max-h-none overflow-y-auto">
+              {historial.map((a) => {
+                const tipoTxt = a.tipo === 'sin_respuestas' ? 'Sin respuestas' : a.tipo === 'insuficiente' ? 'Insuficiente' : (a.tipo || 'Gestión');
+                const estadoTxt = a.estado === 'enviado' ? 'enviado' : a.estado === 'error' ? 'error' : a.estado === 'plantilla_generada' ? 'plantilla generada' : (a.estado || '—');
+                const estadoColor = a.estado === 'enviado' ? 'text-emerald-400' : a.estado === 'error' ? 'text-red-400' : 'text-slate-400';
+                return (
+                  <div key={a.id} className="rounded-md border border-ink-700 bg-ink-850/40 px-2 py-1.5 flex items-start gap-1.5 text-[11px] text-slate-300">
+                    <span className="mt-px">{a.canal === 'whatsapp' ? '💬' : '✉'}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">
+                        {tipoTxt} · <span className={estadoColor}>{estadoTxt}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">
+                        {a.creado_en ? new Date(a.creado_en).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                      </div>
+                      {a.destinatario && <div className="text-[10px] text-slate-500 truncate">{a.destinatario}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-600">Sin gestiones previas para este grupo.</div>
+          )}
+        </div>
+        <div className="order-1 md:order-2 space-y-4 min-w-0">
           {sit && (
             <div
               className="rounded-lg border px-3 py-2 text-xs font-semibold"
@@ -1534,33 +1564,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, historial, onEnviado, onClose }
           </div>
         </div>
 
-        <div className="space-y-2 md:border-l md:border-ink-700 md:pl-5">
-            {historial && historial.length > 0 && (
-              <div className="rounded-lg border border-ink-700 bg-ink-850/40 p-2.5 space-y-1.5 max-h-36 overflow-y-auto">
-                <div className="text-[10px] uppercase tracking-wider text-slate-500">
-                  Historial de este grupo ({historial.length})
-                </div>
-                {historial.map((a) => {
-                  const tipoTxt = a.tipo === 'sin_respuestas' ? 'Sin respuestas' : a.tipo === 'insuficiente' ? 'Insuficiente' : (a.tipo || 'Gestión');
-                  const estadoTxt = a.estado === 'enviado' ? 'enviado' : a.estado === 'error' ? 'error' : a.estado === 'plantilla_generada' ? 'plantilla generada' : (a.estado || '—');
-                  const estadoColor = a.estado === 'enviado' ? 'text-emerald-400' : a.estado === 'error' ? 'text-red-400' : 'text-slate-400';
-                  return (
-                    <div key={a.id} className="flex items-start gap-1.5 text-[11px] text-slate-300">
-                      <span className="mt-px">{a.canal === 'whatsapp' ? '💬' : '✉'}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate">
-                          {tipoTxt} · <span className={estadoColor}>{estadoTxt}</span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 truncate">
-                          {a.creado_en ? new Date(a.creado_en).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
-                          {a.destinatario ? ' · ' + a.destinatario : ''}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+        <div className="order-2 md:order-3 space-y-2 md:border-l md:border-ink-700 md:pl-5">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte</div>
               <div className="inline-flex rounded-md border border-ink-700 overflow-hidden text-[11px]">
