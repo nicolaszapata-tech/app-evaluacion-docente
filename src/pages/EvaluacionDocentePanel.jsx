@@ -1270,6 +1270,41 @@ const GESTION_META = {
   insuficiente: { txt: 'Insuficiencia de respuestas evaluación docente', color: '#f59e0b' },
 };
 
+/** Texto para copiar/reenviar manualmente por WhatsApp (no se envía por
+ *  API -- 2026-09-12, a pedido del usuario: mantener la generación de la
+ *  plantilla en la app, pero el envío real al grupo de WhatsApp lo hace el
+ *  staff a mano desde su celular/WhatsApp Web). */
+function textoWhatsappGestion_(tipo, f, urlEncuesta) {
+  const periodo = `${formatearFechaDDMMYYYY(f.fecha_calendario_inicio) || 's/f'} al ${formatearFechaDDMMYYYY(f.fecha_calendario_fin) || 's/f'}`;
+  const asistieron = f.asistentes_min_1_sesion ?? 0;
+  const respuestas = f.respuestas ?? 0;
+  const partes = [];
+  partes.push('*Gestión Docente*');
+  partes.push('');
+  if (tipo === 'sin_respuestas') {
+    partes.push(`Nos dimos cuenta de que dictaste la materia *${f.materia || 'la materia'}* (periodo: ${periodo}).`);
+    partes.push('');
+    partes.push(`Según nuestros reportes, ningún estudiante de tu grupo realizó la evaluación docente, aunque ${asistieron} estudiantes ingresaron al menos una vez a clase.`);
+    partes.push('');
+    partes.push('Por favor, lo antes posible, comparte con tus estudiantes el link de la evaluación docente y recuérdales completarla:');
+  } else if (tipo === 'insuficiente') {
+    partes.push(`Vemos que en la materia *${f.materia || 'la materia'}* (periodo: ${periodo}) solo ${respuestas} de tus ${asistieron} estudiantes que asistieron a clase completaron la evaluación docente.`);
+    partes.push('');
+    partes.push('Son muy pocas respuestas para tener una lectura confiable. Por favor recuerda a los demás estudiantes completar la evaluación lo antes posible:');
+  } else {
+    return '';
+  }
+  if (urlEncuesta) partes.push(urlEncuesta);
+  partes.push('');
+  if (f.listado_url) {
+    partes.push('Lista de clase para saber a quiénes escribir:');
+    partes.push(f.listado_url);
+    partes.push('');
+  }
+  partes.push('Gracias por tu gestión.');
+  return partes.join('\n');
+}
+
 /** Botón "Gestión" — en TODAS las filas, con un look propio (pill sólida
  *  índigo, distinto al resto de la tabla). Abre el modal de gestión. Si la
  *  materia cerró y hay algo que atender (0 respuestas / insuficientes)
@@ -1300,11 +1335,14 @@ function BotonGestion({ f, estadoAlerta, onAbrir }) {
   );
 }
 
-/** Modal de gestión de una materia: datos del grupo + acciones (envían un
- *  reporte por WhatsApp vía n8n → Meta Cloud API). */
+/** Modal de gestión de una materia: datos del grupo + acciones. Canal
+ *  "Correo" envía automático (n8n → Gmail); canal "WhatsApp" solo genera el
+ *  texto para copiar/reenviar manualmente (sin envío por API). */
 function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
   const [enviando, setEnviando] = useState(null); // 'sin_respuestas' | 'insuficiente' | null
   const [msg, setMsg] = useState(null); // { tipo:'ok'|'error', texto }
+  const [canal, setCanal] = useState('correo'); // 'correo' | 'whatsapp'
+  const [plantillaWA, setPlantillaWA] = useState(null); // { tipo, texto } | null
   useEffect(() => {
     const onEsc = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onEsc);
@@ -1322,6 +1360,15 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
     f.categoria_programa && f.mes_calificacion
       ? `${window.location.origin}/evaluar/${slug(f.categoria_programa)}/${slug(f.mes_calificacion)}`
       : null;
+
+  function manejarClicTipo(tipo) {
+    if (canal === 'whatsapp') {
+      setMsg(null);
+      setPlantillaWA({ tipo, texto: textoWhatsappGestion_(tipo, f, urlEncuesta) });
+      return;
+    }
+    enviarReporte(tipo);
+  }
 
   async function enviarReporte(tipo) {
     setEnviando(tipo);
@@ -1443,13 +1490,36 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
 
           <div className="pt-3 border-t border-ink-700 space-y-2">
             <div className="flex items-center justify-between">
-              <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte por correo</div>
-              <div className="text-[10px] text-slate-500">→ {EMAIL_DESTINO_PRUEBAS} (pruebas)</div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-500">Acciones · reporte</div>
+              <div className="inline-flex rounded-md border border-ink-700 overflow-hidden text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => { setCanal('correo'); setPlantillaWA(null); setMsg(null); }}
+                  className={'px-2.5 py-1 font-semibold ' + (canal === 'correo' ? 'bg-accent-600 text-white' : 'text-slate-400 hover:bg-ink-800')}
+                >
+                  ✉ Correo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setCanal('whatsapp'); setMsg(null); }}
+                  className={'px-2.5 py-1 font-semibold ' + (canal === 'whatsapp' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-ink-800')}
+                >
+                  💬 WhatsApp
+                </button>
+              </div>
             </div>
+            {canal === 'correo' && (
+              <div className="text-[10px] text-slate-500 text-right -mt-1">→ {EMAIL_DESTINO_PRUEBAS} (pruebas)</div>
+            )}
+            {canal === 'whatsapp' && (
+              <div className="text-[10px] text-slate-500 -mt-1">
+                Genera el texto para copiar y reenviarlo tú mismo al grupo/chat de WhatsApp del tutor — no se envía automático.
+              </div>
+            )}
             <button
               type="button"
               disabled={!!enviando}
-              onClick={() => enviarReporte('sin_respuestas')}
+              onClick={() => manejarClicTipo('sin_respuestas')}
               className={
                 'w-full rounded-md border px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-wait ' +
                 (sit === 'sin_respuestas'
@@ -1462,7 +1532,7 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
             <button
               type="button"
               disabled={!!enviando}
-              onClick={() => enviarReporte('insuficiente')}
+              onClick={() => manejarClicTipo('insuficiente')}
               className={
                 'w-full rounded-md border px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-wait ' +
                 (sit === 'insuficiente'
@@ -1475,6 +1545,23 @@ function ModalGestion({ f, dirIdx, estadoAlerta, onEnviado, onClose }) {
             {msg && (
               <div className={'text-xs ' + (msg.tipo === 'ok' ? 'text-emerald-300' : 'text-red-300')}>
                 {msg.texto}
+              </div>
+            )}
+            {canal === 'whatsapp' && plantillaWA && (
+              <div className="rounded-lg border border-emerald-800/60 bg-emerald-950/20 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-wider text-emerald-400">Plantilla lista para enviar</div>
+                  <BotonCopiar valor={plantillaWA.texto} label="texto" />
+                </div>
+                <pre className="whitespace-pre-wrap break-words text-xs text-slate-200 font-sans">{plantillaWA.texto}</pre>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(plantillaWA.texto)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5"
+                >
+                  Abrir WhatsApp Web para reenviar →
+                </a>
               </div>
             )}
           </div>
