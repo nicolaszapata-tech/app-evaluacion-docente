@@ -1278,30 +1278,29 @@ function textoWhatsappGestion_(tipo, f, urlEncuesta) {
   const periodo = `${formatearFechaDDMMYYYY(f.fecha_calendario_inicio) || 's/f'} al ${formatearFechaDDMMYYYY(f.fecha_calendario_fin) || 's/f'}`;
   const asistieron = f.asistentes_min_1_sesion ?? 0;
   const respuestas = f.respuestas ?? 0;
+  const nombreTutor = (f.tutor_calendario || '').trim();
   const partes = [];
-  partes.push('*Gestión Docente*');
+  partes.push(nombreTutor ? `Hola *${nombreTutor}* 👋` : 'Hola 👋');
   partes.push('');
   if (tipo === 'sin_respuestas') {
-    partes.push(`Nos dimos cuenta de que dictaste la materia *${f.materia || 'la materia'}* (periodo: ${periodo}).`);
+    partes.push(`🔴 Tu materia *${f.materia || 'la materia'}* (${periodo}) ya cerró y, según nuestros reportes, *ningún estudiante* completó la evaluación docente, aunque ${asistieron} sí asistieron a clase.`);
     partes.push('');
-    partes.push(`Según nuestros reportes, ningún estudiante de tu grupo realizó la evaluación docente, aunque ${asistieron} estudiantes ingresaron al menos una vez a clase.`);
-    partes.push('');
-    partes.push('Por favor, lo antes posible, comparte con tus estudiantes el link de la evaluación docente y recuérdales completarla:');
+    partes.push('Necesitamos que actúes lo antes posible: comparte con tus estudiantes el link de la evaluación y recuérdales completarla hoy mismo:');
   } else if (tipo === 'insuficiente') {
-    partes.push(`Vemos que en la materia *${f.materia || 'la materia'}* (periodo: ${periodo}) solo ${respuestas} de tus ${asistieron} estudiantes que asistieron a clase completaron la evaluación docente.`);
+    partes.push(`🟠 En tu materia *${f.materia || 'la materia'}* (${periodo}) solo ${respuestas} de ${asistieron} estudiantes que asistieron a clase completaron la evaluación docente — son muy pocas respuestas para tener una lectura confiable.`);
     partes.push('');
-    partes.push('Son muy pocas respuestas para tener una lectura confiable. Por favor recuerda a los demás estudiantes completar la evaluación lo antes posible:');
+    partes.push('Ayúdanos recordándole a tus demás estudiantes completarla lo antes posible:');
   } else {
     return '';
   }
   if (urlEncuesta) partes.push(urlEncuesta);
   partes.push('');
   if (f.listado_url) {
-    partes.push('Lista de clase para saber a quiénes escribir:');
+    partes.push('Aquí tienes la lista de clase para saber a quiénes escribir:');
     partes.push(f.listado_url);
     partes.push('');
   }
-  partes.push('Gracias por tu gestión.');
+  partes.push('¡Gracias por tu gestión! 🙌');
   return partes.join('\n');
 }
 
