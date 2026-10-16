@@ -2074,8 +2074,7 @@ function BotonGestion({ f, estadoAlerta, onAbrir }) {
         (sit ? ' · ' + GESTION_META[sit].txt : '') +
         (estadoAlerta ? ' · WhatsApp ' + (estadoAlerta === 'enviado' ? 'enviado' : 'registrado') : '')
       }
-      className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide text-white shadow-sm ring-1 ring-inset ring-indigo-400/40 transition-transform hover:scale-[1.04] active:scale-95"
-      style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+      className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold text-white bg-accent-500 hover:bg-accent-400 transition-colors active:translate-y-px"
     >
       Gestión
       {sit && (
@@ -4962,15 +4961,15 @@ function TarjetaResumen({ titulo, color, resumen }) {
       </div>
       <div className="grid grid-cols-3 gap-2 text-center">
         <div>
-          <div className="text-lg font-semibold text-slate-100">{muestraChica ? '—' : (resumen.promedio_general ?? '—')}</div>
+          <div className="text-lg font-semibold text-slate-100 tabular-nums">{muestraChica ? '—' : (resumen.promedio_general ?? '—')}</div>
           <div className="text-[11px] text-slate-400">Promedio /5</div>
         </div>
         <div>
-          <div className="text-lg font-semibold text-slate-100">{muestraChica ? '—' : (resumen.promedio_nps ?? '—')}</div>
+          <div className="text-lg font-semibold text-slate-100 tabular-nums">{muestraChica ? '—' : (resumen.promedio_nps ?? '—')}</div>
           <div className="text-[11px] text-slate-400">NPS /10</div>
         </div>
         <div>
-          <div className="text-lg font-semibold text-slate-100">{resumen.respuestas}</div>
+          <div className="text-lg font-semibold text-slate-100 tabular-nums">{resumen.respuestas}</div>
           <div className="text-[11px] text-slate-400">Respuestas</div>
         </div>
       </div>
@@ -5478,7 +5477,7 @@ function KpiRanking({ etiqueta, valor, detalle, color = '#cbd5e1', onClick, aler
       }
     >
       <div className="text-[11px] uppercase tracking-wider text-slate-500">{etiqueta}</div>
-      <div className="text-2xl font-bold mt-0.5" style={{ color }}>{valor}</div>
+      <div className="text-2xl font-bold mt-0.5 tabular-nums" style={{ color }}>{valor}</div>
       {detalle && <div className="text-[11px] text-slate-400 mt-0.5">{detalle}{onClick && <span className="text-accent-400"> · ver detalle ›</span>}</div>}
     </Comp>
   );
