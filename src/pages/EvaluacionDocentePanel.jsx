@@ -5602,6 +5602,7 @@ function RankingDocente({ incluirModulo0 }) {
   const [crudo, setCrudo] = useState(null);
   const [baseGrupos, setBaseGrupos] = useState([]);
   const [mapaListas, setMapaListas] = useState(() => new Map()); // group_id -> { cant, asis, listaUrl }
+  const [activosPorMes, setActivosPorMes] = useState({}); // doc_estudiantes_activos: mes -> estudiantes activos
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
   const [mesSeleccionado, setMesSeleccionado] = useState('TODOS');
@@ -5621,12 +5622,13 @@ function RankingDocente({ incluirModulo0 }) {
         // los docentes, sus materias asignadas y las Esperadas.
         // + Asist. ≥1 / Cant. est. listas por grupo (2026-10-16): la muestra
         // de referencia del docente son los que asistieron al menos a 1 clase.
-        const [{ crudo }, base, listas] = await Promise.all([
+        const [{ crudo }, base, listas, activos] = await Promise.all([
           fetchStatsYCrudo(),
           fetchGruposEvaluacionDocente(),
           fetchCantEstListasPorGrupo().catch(() => new Map()),
+          fetchEstudiantesActivosMapa().catch(() => ({})),
         ]);
-        if (vivo) { setCrudo(crudo); setBaseGrupos(base); setMapaListas(listas); }
+        if (vivo) { setCrudo(crudo); setBaseGrupos(base); setMapaListas(listas); setActivosPorMes(activos || {}); }
       } catch (e) {
         if (vivo) setError(e.message || String(e));
       } finally {
@@ -5674,7 +5676,18 @@ function RankingDocente({ incluirModulo0 }) {
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 
   const totalRespuestas = docentes.reduce((s, d) => s + d.totalRespuestas, 0);
-  const totalEsperadas = totalAsistentes ?? docentes.reduce((s, d) => s + (d.cuposEsperados || 0), 0);
+  // Denominador del total general (2026-10-16, a pedido del usuario): los
+  // ESTUDIANTES ACTIVOS del mes (doc_estudiantes_activos, el mismo dato de
+  // Estadísticas), no la suma de asistentes. En 'TODOS' = suma de los meses
+  // con respuestas. Si a algún mes le falta el dato, se usa la suma de
+  // Asist. ≥1 como respaldo y se avisa cuál falta.
+  const mesesDelRecorte = modoTodos ? mesesDisponibles : [mesSeleccionado];
+  const mesesSinActivos = mesesDelRecorte.filter((m) => typeof activosPorMes[m] !== 'number');
+  const totalActivos = mesesSinActivos.length ? null : mesesDelRecorte.reduce((s, m) => s + activosPorMes[m], 0);
+  const totalEsperadas = totalActivos ?? totalAsistentes ?? docentes.reduce((s, d) => s + (d.cuposEsperados || 0), 0);
+  const etiquetaEsperadas = totalActivos != null
+    ? (modoTodos ? 'estudiantes activos (suma de los meses)' : `activos en ${mesSeleccionado}`)
+    : totalAsistentes != null ? 'que asistieron (≥1 clase)' : 'cupos';
   const conNoAsignadas = docentes.filter((d) => d.respuestasNoAsignadas > 0);
   const totalNoAsignadas = conNoAsignadas.reduce((s, d) => s + d.respuestasNoAsignadas, 0);
   const totalSinAsignacion = sinAsignacion.reduce((s, x) => s + x.n, 0);
@@ -5733,7 +5746,10 @@ function RankingDocente({ incluirModulo0 }) {
           <KpiRanking
             etiqueta="Respuestas"
             valor={totalRespuestas}
-            detalle={totalEsperadas ? `de ${totalEsperadas} ${totalAsistentes != null ? 'que asistieron (≥1 clase)' : 'cupos'} · ${comaDecimal_(((totalRespuestas / totalEsperadas) * 100).toFixed(1))}%` : 'sin dato de asistencia'}
+            detalle={
+              (totalEsperadas ? `de los ${totalEsperadas} ${etiquetaEsperadas} · ${comaDecimal_(((totalRespuestas / totalEsperadas) * 100).toFixed(1))}%` : 'sin dato de estudiantes')
+              + (mesesSinActivos.length ? ` (falta cargar Estudiantes Activos de ${mesesSinActivos.join(', ')})` : '')
+            }
           />
           <KpiRanking
             etiqueta="Promedio institucional"
