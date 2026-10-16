@@ -5280,8 +5280,12 @@ function construirRankingDesdeBase_(crudo, baseRecorte, mapaListas) {
 
   const lista = Array.from(docentes.values()).map((d) => {
     const total = d.filas.length;
+    // 2026-10-16: las 13 preguntas (no solo las 6 del bloque Docente) y el
+    // promedio por sección, para comparar cada una contra el institucional.
     const porPregunta = {};
-    SECCION_DOCENTE.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(d.filas, [k]); });
+    SECCIONES_EVALUACION.forEach((sec) => sec.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(d.filas, [k]); }));
+    const porSeccion = {};
+    SECCIONES_EVALUACION.forEach((sec) => { porSeccion[sec.key] = calcularPromedioClaves(d.filas, sec.keys); });
     const conComentario = d.filas.filter((f) => f.docente_comentarios);
     const longitudPromedio = conComentario.length
       ? Math.round(conComentario.reduce((s, f) => s + f.docente_comentarios.length, 0) / conComentario.length)
@@ -5324,6 +5328,7 @@ function construirRankingDesdeBase_(crudo, baseRecorte, mapaListas) {
       // se ocultaba con < 5); la confiabilidad solo pone el aviso.
       promedioDocente: total > 0 ? calcularPromedioClaves(d.filas, SECCION_DOCENTE.keys) : null,
       porPregunta,
+      porSeccion,
       comentarios: { conteo: conComentario.length, longitudPromedio },
       confiabilidad: confiabilidadDocente_(total, muestra),
     };
@@ -5662,8 +5667,10 @@ function RankingDocente({ incluirModulo0 }) {
   const promedioInstitucional = useMemo(() => {
     const todas = (crudoFiltrado || []).flatMap((g) => g.filas || []);
     const porPregunta = {};
-    SECCION_DOCENTE.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(todas, [k]); });
-    return { porPregunta, global: calcularPromedioClaves(todas, SECCION_DOCENTE.keys) };
+    SECCIONES_EVALUACION.forEach((sec) => sec.keys.forEach((k) => { porPregunta[k] = calcularPromedioClaves(todas, [k]); }));
+    const porSeccion = {};
+    SECCIONES_EVALUACION.forEach((sec) => { porSeccion[sec.key] = calcularPromedioClaves(todas, sec.keys); });
+    return { porPregunta, porSeccion, global: calcularPromedioClaves(todas, SECCION_DOCENTE.keys) };
   }, [crudoFiltrado]);
 
   // si cambia el mes y la pestaña ya no existe, volver a "Todas"
@@ -5953,25 +5960,38 @@ function ChipMaterias({ materias }) {
 
 /** Barras por pregunta (escala 1-5) con marca del promedio institucional --
  *  inspirado en las "hojas de personaje": una barra por atributo. */
-function BarrasPorPregunta({ docente, promedioInstitucional, color }) {
+/** Diferencia con signo y color (+0,15 verde / −0,08 rojo). */
+function DeltaInst({ v, inst }) {
+  if (typeof v !== 'number' || typeof inst !== 'number') return null;
+  const d = v - inst;
+  return (
+    <span className={'font-semibold tabular-nums ' + (d >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+      {d >= 0 ? '+' : '−'}{comaDecimal_(Math.abs(d).toFixed(2))}
+    </span>
+  );
+}
+
+/** Una barra por pregunta (escala 1-5) con marca del institucional, y los
+ *  DOS números a la vista: "Docente 4,90 · Institucional 4,75 · +0,15"
+ *  (2026-10-16, a pedido del usuario: el institucional por pregunta solo se
+ *  veía como una rayita). `keys` = preguntas de la sección a mostrar. */
+function BarrasPorPregunta({ docente, promedioInstitucional, color, keys = SECCION_DOCENTE.keys }) {
   return (
     <div className="space-y-3">
-      {SECCION_DOCENTE.keys.map((k) => {
+      {keys.map((k) => {
         const v = docente.porPregunta[k];
         const inst = promedioInstitucional.porPregunta[k];
         const delta = typeof v === 'number' && typeof inst === 'number' ? v - inst : null;
         const pos = (x) => Math.max(0, Math.min(100, ((x - 1) / 4) * 100));
         return (
           <div key={k}>
-            <div className="flex items-baseline justify-between text-xs mb-1">
-              <span className="text-slate-300">{ETIQUETA_CORTA[k] || k}</span>
-              <span className="flex items-baseline gap-2">
-                <span className="font-semibold text-slate-100">{fmtDec_(v)}</span>
-                {delta != null && (
-                  <span className={'text-[11px] font-semibold ' + (delta >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                    {delta >= 0 ? '+' : '−'}{comaDecimal_(Math.abs(delta).toFixed(2))}
-                  </span>
-                )}
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-xs mb-1">
+              <span className="text-slate-200 font-medium">{ETIQUETA_CORTA[k] || k}</span>
+              <span className="flex items-baseline gap-2 tabular-nums">
+                <span className="text-slate-400">Docente <b className="text-slate-50">{fmtDec_(v)}</b></span>
+                <span className="text-slate-500">·</span>
+                <span className="text-slate-400">Institucional <b className="text-slate-200">{fmtDec_(inst)}</b></span>
+                {delta != null && <><span className="text-slate-500">·</span><DeltaInst v={v} inst={inst} /></>}
               </span>
             </div>
             <div className="relative h-2.5 rounded-full bg-ink-700">
@@ -5987,6 +6007,43 @@ function BarrasPorPregunta({ docente, promedioInstitucional, color }) {
         <span className="flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: color }} />Docente (escala 1 a 5)</span>
         <span className="flex items-center gap-1.5"><span className="w-0.5 h-3 bg-slate-200" />Promedio institucional</span>
       </div>
+    </div>
+  );
+}
+
+/** Resumen por sección (Docente / Contenidos / Plataforma): promedio del
+ *  docente vs. institucional y diferencia -- 2026-10-16, para consolidar en
+ *  la ficha la comparación general además del detalle por pregunta. */
+const ORDEN_SECCIONES_FICHA = ['docente', 'contenidos', 'plataforma'];
+function ResumenSecciones({ docente, promedioInstitucional }) {
+  return (
+    <div className="grid sm:grid-cols-3 gap-3">
+      {ORDEN_SECCIONES_FICHA.map((key) => {
+        const sec = SECCIONES_EVALUACION.find((x) => x.key === key);
+        const v = docente.porSeccion?.[key];
+        const inst = promedioInstitucional.porSeccion?.[key];
+        return (
+          <div key={key} className="rounded-xl border border-ink-600 bg-ink-800/60 p-3" style={{ borderLeft: `3px solid ${sec.color}` }}>
+            <div className="text-[11px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: sec.color }}>
+              {sec.titulo.replace('Satisfacción ', '')}
+              {key !== 'docente' && <span className="normal-case tracking-normal font-normal text-slate-500"> · de la materia</span>}
+            </div>
+            <div className="flex items-baseline justify-between gap-2 tabular-nums">
+              <div>
+                <div className="text-[11px] text-slate-400">Docente</div>
+                <div className="text-2xl font-bold" style={{ color: colorNota15_(v) }}>{fmtDec_(v)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[11px] text-slate-400">Institucional</div>
+                <div className="text-lg font-semibold text-slate-200">{fmtDec_(inst)}</div>
+              </div>
+            </div>
+            <div className="text-xs mt-1">
+              <DeltaInst v={v} inst={inst} /> <span className="text-slate-500">vs. institucional</span>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -6175,6 +6232,10 @@ function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccion
               : <>Muestra pequeña: {textoCobertura_(docente)}. Tómalo como referencia; con pocas respuestas los números pueden moverse bastante.</>}
           </div>
         )}
+        <div className="mb-5">
+          <p className="text-xs text-slate-400 mb-2">Resumen por sección · docente vs. institucional ({etiquetaPeriodo})</p>
+          <ResumenSecciones docente={docente} promedioInstitucional={promedioInstitucional} />
+        </div>
         <div className="grid md:grid-cols-2 gap-6 items-center">
           <div>
             <p className="text-xs text-slate-400 mb-3">Bloque Docente, pregunta por pregunta</p>
@@ -6187,6 +6248,20 @@ function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccion
               <span className="flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: color }} />{docente.nombre}</span>
               <span className="flex items-center gap-1.5"><span className="w-3 border-t border-dashed border-slate-300" />Institucional</span>
             </div>
+          </div>
+        </div>
+        <div className="mt-6 pt-4 border-t border-ink-700">
+          <p className="text-xs text-slate-400 mb-3">Contenidos y plataforma, pregunta por pregunta <span className="text-slate-500">(califican la materia y la plataforma, no al docente)</span></p>
+          <div className="grid md:grid-cols-2 gap-6">
+            {['contenidos', 'plataforma'].map((key) => {
+              const sec = SECCIONES_EVALUACION.find((x) => x.key === key);
+              return (
+                <div key={key}>
+                  <p className="text-[11px] uppercase tracking-wider font-semibold mb-2" style={{ color: sec.color }}>{sec.titulo.replace('Satisfacción ', '')}</p>
+                  <BarrasPorPregunta docente={docente} promedioInstitucional={promedioInstitucional} color={sec.color} keys={sec.keys} />
+                </div>
+              );
+            })}
           </div>
         </div>
         </>
