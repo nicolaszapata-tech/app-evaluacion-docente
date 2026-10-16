@@ -2731,7 +2731,7 @@ function ChipFiltro({ activo, onClick, color, children }) {
       style={
         color
           ? activo
-            ? { backgroundColor: color + '26', borderColor: color, color }
+            ? { backgroundColor: color + '26', borderColor: color, color: '#f1f5f9' }
             : { borderColor: '#2f3a4d', color: '#94a3b8' }
           : activo
             ? { backgroundColor: 'rgba(91,127,255,.15)', borderColor: '#5b7fff', color: '#7d9bff' }
@@ -2813,11 +2813,17 @@ const ETIQUETA_CORTA = {
   nps_recomendaria: 'NPS',
 };
 
+/** Paleta de carreras -- 2026-10-16, validada con validate_palette.js del
+ *  skill dataviz (--mode dark --surface #0f131a --pairs all): única
+ *  combinación de 4 de la paleta de referencia que pasa todos los checks.
+ *  La anterior fallaba para daltónicos (Marketing rosa ↔ Ingeniería verde).
+ *  Son colores de MARCA (punto, borde, fondo tenue, línea): el texto va
+ *  siempre en slate -- el verde no llega a 4,5:1 como texto. */
 const COLOR_CATEGORIA = {
-  Administración: '#5b7fff',
-  Contabilidad: '#f59e0b',
-  Ingeniería: '#10b981',
-  Marketing: '#f43f5e',
+  Administración: '#9085e9',
+  Contabilidad: '#c98500',
+  Ingeniería: '#008300',
+  Marketing: '#d55181',
 };
 
 /** Par validado con scripts/validate_palette.js del skill dataviz (todos los
@@ -3062,7 +3068,7 @@ function Estadisticas({ meses, incluirModulo0 }) {
                         className="text-sm rounded-md px-3 py-1.5 border transition-colors flex items-center gap-1.5"
                         style={
                           activa
-                            ? { backgroundColor: color + '26', borderColor: color, color }
+                            ? { backgroundColor: color + '26', borderColor: color, color: '#f1f5f9' }
                             : { borderColor: '#2f3a4d', color: '#cbd5e1' }
                         }
                       >
@@ -3851,7 +3857,7 @@ function MatrizDescriptiva({ datos, mesFiltro, onCambiarMes }) {
               const pct = totalRespuestasGlobal > 0 ? Math.round((c.totalRespuestas / totalRespuestasGlobal) * 100) : 0;
               return (
                 <div key={c.carrera} className="rounded-md px-3 py-2 min-w-[130px] flex-1" style={{ backgroundColor: color + '14', borderLeft: `3px solid ${color}` }}>
-                  <div className="text-[11px] font-bold" style={{ color }}>{c.carrera}</div>
+                  <div className="text-[11px] font-bold text-slate-200">{c.carrera}</div>
                   <div className="text-lg font-bold text-slate-100 leading-tight">{c.totalRespuestas} <span className="text-[10px] font-normal text-slate-500">({pct}%)</span></div>
                 </div>
               );
@@ -3896,7 +3902,10 @@ function MatrizDescriptiva({ datos, mesFiltro, onCambiarMes }) {
             const color = COLOR_CATEGORIA[c.carrera] || '#5b7fff';
             return (
               <div key={c.carrera} className="rounded-lg overflow-hidden border" style={{ borderColor: color + '35' }}>
-                <div className="px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: color + '1c', color }}>{c.carrera}</div>
+                <div className="px-3 py-1.5 text-xs font-bold text-slate-100 flex items-center gap-1.5" style={{ backgroundColor: color + '1c' }}>
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
+                  {c.carrera}
+                </div>
                 <div className="overflow-x-auto">
                   <table className="text-xs border-collapse w-full">
                     <thead>
@@ -4656,7 +4665,7 @@ function SeccionSatisfaccion({ titulo, seccion, promedios2025, datosFijo2026, cr
     return {
       type: 'scatter', mode: 'lines+markers+text', name: cat.categoria, x: MESES_ES, y: serie,
       line: { color, width: 2 }, marker: { color, size: 6 },
-      text: etiquetasDecimal_(serie), textposition: 'top center', textfont: { color, size: 9 },
+      text: etiquetasDecimal_(serie), textposition: 'top center', textfont: { color: '#cbd5e1', size: 9 },
       cliponaxis: false, connectgaps: false,
     };
   }), [columnas]);
@@ -4735,7 +4744,7 @@ function BotonModoGrafico({ activo, onClick, color, children }) {
       type="button"
       onClick={onClick}
       className="text-[11px] rounded-md px-2.5 py-1 border transition-colors"
-      style={activo ? { backgroundColor: color + '2e', borderColor: color, color } : { borderColor: '#2f3a4d', color: '#94a3b8' }}
+      style={activo ? { backgroundColor: color + '2e', borderColor: color, color: '#f1f5f9' } : { borderColor: '#2f3a4d', color: '#94a3b8' }}
     >
       {children}
     </button>
@@ -5351,7 +5360,7 @@ function baseDelRecorte_(baseGrupos, mesSeleccionado, incluirModulo0, mesesConRe
 }
 
 const SECCION_VARIAS_CARRERAS = 'Varias carreras';
-const COLOR_VARIAS_CARRERAS = '#a78bfa';
+const COLOR_VARIAS_CARRERAS = '#94a3b8'; // gris: no es una carrera
 
 /** Una sección por carrera (orden de CATEGORIAS_EVALUACION_DOCENTE, más
  *  cualquier otra que aparezca) + "Varias carreras" al final. Cada docente
@@ -5512,11 +5521,30 @@ function BadgeConfiabilidad({ d }) {
 }
 
 function ChipCarrera({ carrera }) {
-  const c = COLOR_CATEGORIA[carrera] || '#5b7fff';
-  return <span className="text-[10px] font-semibold rounded px-1.5 py-0.5" style={{ color: c, backgroundColor: c + '1F' }}>{carrera}</span>;
+  const c = COLOR_CATEGORIA[carrera] || '#94a3b8';
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-ink-700/70 text-slate-300">
+      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: c }} />
+      {carrera}
+    </span>
+  );
 }
 
-function TarjetaDocente({ d, color, mostrarCarreras, onAbrir }) {
+/** Diferencia del promedio del docente vs. el institucional, en texto
+ *  neutro con ▲/▼ (no rojo/verde: casi todos los promedios están entre 4 y
+ *  5 y el color de la nota no distinguía nada). */
+function DeltaInstitucional({ valor, institucional }) {
+  if (typeof valor !== 'number' || typeof institucional !== 'number') return null;
+  const delta = valor - institucional;
+  if (Math.abs(delta) < 0.005) return <div className="text-[10px] text-slate-500 mt-1">= institucional</div>;
+  return (
+    <div className="text-[10px] text-slate-400 mt-1 tabular-nums" title={`Institucional: ${fmtDec_(institucional)}`}>
+      {delta > 0 ? '▲ +' : '▼ −'}{fmtDec_(Math.abs(delta))} vs. inst.
+    </div>
+  );
+}
+
+function TarjetaDocente({ d, color, mostrarCarreras, promedioInstitucional, onAbrir }) {
   const pct = d.muestra ? (d.totalRespuestas / d.muestra) * 100 : null;
   return (
     <button
@@ -5525,7 +5553,7 @@ function TarjetaDocente({ d, color, mostrarCarreras, onAbrir }) {
       className="text-left rounded-xl border border-ink-600 bg-ink-800/50 hover:bg-ink-700/50 hover:border-ink-500 transition-colors p-4 flex flex-col gap-3"
     >
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-sm font-bold" style={{ color, backgroundColor: color + '26', border: `1px solid ${color}66` }}>
+        <div className="w-10 h-10 shrink-0 rounded-lg flex items-center justify-center text-sm font-bold text-slate-100" style={{ backgroundColor: color + '33', boxShadow: `inset 0 0 0 1px ${color}99` }}>
           {iniciales_(d.nombre)}
         </div>
         <div className="min-w-0 flex-1">
@@ -5540,8 +5568,9 @@ function TarjetaDocente({ d, color, mostrarCarreras, onAbrir }) {
             <div className="text-xs text-slate-500 mt-1">—</div>
           ) : (
             <>
-              <div className="text-xl font-bold leading-none" style={{ color: colorNota15_(d.promedioDocente) }}>{fmtDec_(d.promedioDocente)}</div>
+              <div className="text-xl font-bold leading-none text-slate-100 tabular-nums">{fmtDec_(d.promedioDocente)}</div>
               <div className="text-[10px] text-slate-500 mt-0.5">promedio /5</div>
+              <DeltaInstitucional valor={d.promedioDocente} institucional={promedioInstitucional} />
             </>
           )}
         </div>
@@ -5551,9 +5580,9 @@ function TarjetaDocente({ d, color, mostrarCarreras, onAbrir }) {
           <span>
             <span className="text-slate-200 font-semibold">{d.totalRespuestas}</span> resp. de {d.muestra ?? '—'} {d.muestraEsAsistencia ? 'que asistieron' : 'cupos'}
           </span>
-          <span className="text-slate-300 font-semibold">{pct == null ? '' : comaDecimal_(pct.toFixed(0)) + '%'}</span>
+          <span className="text-slate-300 font-semibold tabular-nums">{pct == null ? '' : comaDecimal_(pct.toFixed(0)) + '%'}</span>
         </div>
-        <BarraProgreso valor={d.totalRespuestas} max={d.muestra || 0} color={color} />
+        <BarraProgreso valor={d.totalRespuestas} max={d.muestra || 0} color="#64748b" />
       </div>
       {(d.respuestasNoAsignadas > 0 || d.confiabilidad !== 'confiable') && (
         <div className="flex flex-wrap gap-1.5">
@@ -5691,7 +5720,7 @@ function RankingDocente({ incluirModulo0 }) {
                 type="button"
                 onClick={() => setMesSeleccionado(mes)}
                 className="text-sm rounded-full px-3 py-1 border transition-colors flex items-center gap-1.5"
-                style={activo ? { backgroundColor: color + '26', borderColor: color, color } : { borderColor: '#2f3a4d', color: '#94a3b8' }}
+                style={activo ? { backgroundColor: color + '26', borderColor: color, color: '#f1f5f9' } : { borderColor: '#2f3a4d', color: '#94a3b8' }}
               >
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                 {mes === 'TODOS' ? 'Todos los meses' : mes}
@@ -5734,8 +5763,9 @@ function RankingDocente({ incluirModulo0 }) {
                 type="button"
                 onClick={() => setTab(s.titulo)}
                 className="text-sm font-semibold rounded-lg px-3 py-1.5 transition-colors flex items-center gap-2"
-                style={activo ? { backgroundColor: s.color + '26', color: s.color } : { color: '#94a3b8' }}
+                style={activo ? { backgroundColor: s.color + '26', color: '#f1f5f9', boxShadow: `inset 0 -2px 0 ${s.color}` } : { color: '#94a3b8' }}
               >
+                {s.titulo !== TAB_TODAS && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />}
                 {s.titulo === TAB_TODAS ? 'Todas' : s.titulo}
                 <span className="text-[11px] rounded-full px-1.5" style={{ backgroundColor: (activo ? s.color : '#4a5875') + '33' }}>
                   {s.docentes.length}
@@ -5789,6 +5819,7 @@ function RankingDocente({ incluirModulo0 }) {
                     d={d}
                     color={s?.color || COLOR_SECCION_RANKING}
                     mostrarCarreras={!!s?.mostrarCarreras || tabValida === TAB_TODAS}
+                    promedioInstitucional={promedioInstitucional.global}
                     onAbrir={() => setDocenteAbierto(d.nombre)}
                   />
                 );
@@ -5892,11 +5923,11 @@ function RankingDocente({ incluirModulo0 }) {
  *  (1 / 2 / 3+), con los nombres al pasar el mouse. */
 function ChipMaterias({ materias }) {
   const n = materias.length;
-  const color = n >= 3 ? '#f59e0b' : n === 2 ? '#22d3ee' : '#94a3b8';
+  // Neutro: el ámbar queda reservado para alertas (antes "3+ materias" se
+  // leía como advertencia).
   return (
     <span
-      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold cursor-help"
-      style={{ color, backgroundColor: color + '1F' }}
+      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold cursor-help bg-ink-700/70 text-slate-400"
       title={materias.join('\n') || 'Sin materias asignadas'}
     >
       {n === 0 ? 'sin materias' : n === 1 ? '1 materia' : `${n} materias`}
