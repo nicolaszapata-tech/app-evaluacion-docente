@@ -25,6 +25,31 @@ import { dominioPermitido } from '../src/lib/auth.js';
 const WEBHOOK_BASE = process.env.N8N_WEBHOOK_BASE;
 const SYNC_SECRET = process.env.SYNC_SECRET_EVALUACION_DOCENTE;
 const WEBHOOK_PATH = 'evaluacion-docente-panel';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+
+/** Acciones que devuelven datos personales de estudiantes (correo, cédula):
+ *  2026-10-15. Para estas NO basta el correo que manda el navegador (se
+ *  puede inventar); se exige el ID token de Google de la sesión y se
+ *  verifica acá contra Google (firma, audiencia = nuestro client id,
+ *  vencimiento, correo verificado y dominio permitido). */
+const ACCIONES_CON_DATOS_PERSONALES = new Set(['respuestas_erradas_detalle', 'corregir_respuesta']);
+
+async function correoVerificadoGoogle(idToken) {
+  if (!idToken || !GOOGLE_CLIENT_ID) return null;
+  try {
+    const r = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken));
+    if (!r.ok) return null;
+    const p = await r.json();
+    if (p.aud !== GOOGLE_CLIENT_ID) return null;
+    if (!['accounts.google.com', 'https://accounts.google.com'].includes(p.iss)) return null;
+    if (!(p.email_verified === true || p.email_verified === 'true')) return null;
+    if (!p.exp || Number(p.exp) * 1000 < Date.now()) return null;
+    if (!dominioPermitido(p.email)) return null;
+    return p.email;
+  } catch {
+    return null;
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -37,8 +62,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { correoSesion, ...body } = req.body || {};
-  if (!dominioPermitido(correoSesion)) {
+  const { correoSesion: correoDeclarado, idToken, ...body } = req.body || {};
+  let correoSesion = correoDeclarado;
+  if (ACCIONES_CON_DATOS_PERSONALES.has(body.accion)) {
+    correoSesion = await correoVerificadoGoogle(idToken);
+    if (!correoSesion) {
+      res.status(401).json({ error: 'sesion_expirada', detalle: 'Inicia sesión de nuevo con Google para ver datos de estudiantes.' });
+      return;
+    }
+  } else if (!dominioPermitido(correoSesion)) {
     res.status(403).json({ error: 'Sesión no autorizada.' });
     return;
   }

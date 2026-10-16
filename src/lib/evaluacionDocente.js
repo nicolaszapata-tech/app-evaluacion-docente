@@ -88,7 +88,7 @@ export async function fetchMesActivo(mes) {
 export async function fetchOpcionesFormulario(categoria, mes) {
   const { data, error } = await supabase
     .from('doc_base_de_grupos')
-    .select('subject_name, tutor_calendario, group_id')
+    .select('subject_name, tutor_calendario, group_id, horario, fecha_calendario_inicio, fecha_calendario_fin')
     .eq('categoria_programa', categoria)
     .eq('mes_calificacion', mes);
   if (error) throw error;
@@ -150,6 +150,18 @@ export async function fetchGruposCombinadosEvalDocente() {
 /** Directorio de docentes (tabla compartida `directutor_tutores_base_de_directorio`,
  *  SELECT público). Para el tooltip de contacto al pasar el mouse por el
  *  nombre del docente en la tabla de Grupos. */
+/** Pide a n8n que vuelva a leer la hoja TUTORES-BASE DE DIRECTORIO (directorio compartido entre apps). */
+export async function recargarDirectorioDocente() {
+  const res = await fetch('https://n8n.kuepa.com/webhook/directorio-recargar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok || out.ok === false) throw new Error(out.error || out.message || 'No se pudo recargar el directorio');
+  return out;
+}
+
 export async function fetchDirectorioTutores() {
   const { data, error } = await supabase
     .from('directutor_tutores_base_de_directorio')
@@ -234,7 +246,7 @@ async function llamarPanel_(body) {
   const respuesta = await fetch('/api/panel', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, correoSesion: sesion?.email || null }),
+    body: JSON.stringify({ ...body, correoSesion: sesion?.email || null, idToken: sesion?.idToken || null }),
   });
   if (!respuesta.ok) {
     const texto = await respuesta.text().catch(() => '');
@@ -391,6 +403,205 @@ export async function fetchCrudoEvaluacionDocente() {
 export async function fetchStatsYCrudo() {
   const { stats, crudo, cuposDocente } = await llamarPanel_({ accion: 'stats' });
   return { stats: stats || [], crudo: crudo || [], cuposDocente: cuposDocente || [] };
+}
+
+/** Solo cuántas respuestas hay por categoria+mes+materia: [{categoria_programa,
+ *  mes_calificacion, materia, respuestas}] -- 2026-10-14, optimización: la
+ *  vista Grupos y Alertas de cierre bajaban todo el crudo de stats (~840 KB)
+ *  solo para contar; esta acción de n8n (`conteos_respuestas`) pesa ~13 KB y
+ *  da exactamente los mismos conteos (mismo filtro y misma materia recortada
+ *  que Calcular Stats). Estadísticas y Ranking siguen usando fetchStatsYCrudo. */
+/** Detalle de las respuestas "erradas" de una materia (el estudiante eligió
+ *  un docente que no la dicta según la base): fecha, correo, cédula, docente
+ *  elegido -- 2026-10-15. Trae datos personales, así que /api/panel exige el
+ *  token de Google verificado (no basta el correo de la sesión). Lanza un
+ *  Error con .sesionExpirada = true si hay que volver a iniciar sesión. */
+export async function fetchRespuestasErradasDetalle({ categoria, mes, materia, tutoresValidos, modo, docente, materiasValidas }) {
+  // modo 'materia' (2026-10-16): docente correcto + materia que no dicta ->
+  // se manda docente + materiasValidas en vez de materia + tutoresValidos.
+  try {
+    const { filas } = await llamarPanel_({ accion: 'respuestas_erradas_detalle', categoria, mes, materia, tutoresValidos, modo, docente, materiasValidas });
+    return filas || [];
+  } catch (e) {
+    if (/HTTP 401/.test(e.message)) {
+      const err = new Error('Tu sesión de Google venció (dura 1 hora). Cierra sesión y vuelve a entrar para ver los correos.');
+      err.sesionExpirada = true;
+      throw err;
+    }
+    throw e;
+  }
+}
+
+/** Reasigna una respuesta "errada" al grupo correcto (2026-10-15). Modifica
+ *  datos -> /api/panel exige token de Google verificado (igual que el
+ *  detalle). La función de Supabase guarda el docente/grupo original y quién
+ *  corrigió. Devuelve { ok, docente, id_grupo_mapeo } o lanza Error. */
+export async function corregirRespuesta({ respuestaId, groupId }) {
+  try {
+    const r = await llamarPanel_({ accion: 'corregir_respuesta', respuesta_id: respuestaId, group_id: groupId });
+    if (!r || !r.ok) throw new Error('No se pudo corregir: ' + ((r && r.error) || 'respuesta inesperada'));
+    return r;
+  } catch (e) {
+    if (/HTTP 401/.test(e.message)) {
+      const err = new Error('Tu sesión de Google venció (dura 1 hora). Cierra sesión y vuelve a entrar para corregir.');
+      err.sesionExpirada = true;
+      throw err;
+    }
+    throw e;
+  }
+}
+
+export async function fetchConteosRespuestas() {
+  const { conteos } = await llamarPanel_({ accion: 'conteos_respuestas' });
+  return conteos || [];
+}
+
+/** Codebook del análisis cualitativo (2026-09-23, definido con el usuario a
+ *  partir de codificación abierta manual sobre una muestra real de
+ *  comentarios). Vive acá para que la vista Cualitativo de Estadísticas y
+ *  cualquier otro consumidor futuro compartan el mismo orden/color/etiqueta. */
+/** Ramas (2026-09-23, a pedido del usuario): agrupan los 13 temas en 4
+ *  familias para que "Temas más mencionados" se lea como árbol, no como
+ *  lista plana. Criterio: DOCENTE = sobre el profesor en sí (metodología Y
+ *  conducta); CONTENIDOS = sobre la materia/Coursera; PLATAFORMA = LMS
+ *  técnico; INSTITUCION = todo lo que no depende del profesor ni de la
+ *  materia puntual -- servicio, confianza, horarios de clase (horario es
+ *  logística institucional, no metodología del profesor). SIN_SUSTANCIA
+ *  queda fuera del árbol (no aporta tema), igual que antes. */
+export const RAMAS_CUALITATIVO = [
+  { key: 'docente', label: 'Profesor', color: '#5b7fff' },
+  { key: 'contenidos', label: 'Contenidos', color: '#f59e0b' },
+  { key: 'plataforma', label: 'Plataforma', color: '#f43f5e' },
+  { key: 'institucion', label: 'Institución / NPS', color: '#a78bfa' },
+];
+
+export const TEMAS_CUALITATIVO = [
+  // DOCENTE_METODOLOGIA y PLATAFORMA_TECNICA (2026-09-24, a pedido del usuario:
+  // "quiero que cada rama principal tenga la misma cantidad de subramas") -- eran
+  // un solo tema gigante cada uno (673 y 433 casos) mientras las otras ramas
+  // tenían 4-5. Se partieron en subtemas más específicos por palabra clave (barato,
+  // sin re-clasificar con LLM: la clasificación de TEMA por keyword es segura,
+  // a diferencia de SENTIMIENTO por keyword que sí falló antes). Los tags viejos
+  // siguen en las filas de doc_analisis_cualitativo (no se borraron), solo se
+  // ocultan de este árbol -- por eso no tienen entrada acá.
+  { key: 'DOCENTE_CLARIDAD', rama: 'docente', label: 'Claridad al explicar', color: '#5b7fff', descripcion: 'Explica con claridad, se entiende bien, buena comunicación de los temas.' },
+  { key: 'DOCENTE_DOMINIO', rama: 'docente', label: 'Dominio del tema', color: '#22d3ee', descripcion: 'Domina el tema, conocimiento y preparación del docente.' },
+  { key: 'DOCENTE_TRATO', rama: 'docente', label: 'Trato / actitud', color: '#818cf8', descripcion: 'Amabilidad, paciencia y actitud del docente hacia el grupo -- también agrupa los elogios genéricos ("excelente docente") sin un aspecto específico.' },
+  { key: 'DOCENTE_DINAMISMO', rama: 'docente', label: 'Dinamismo en clase', color: '#60a5fa', descripcion: 'Clases dinámicas, participativas, entretenidas.' },
+  { key: 'PLATAFORMA_RENDIMIENTO', rama: 'plataforma', label: 'Rendimiento / experiencia', color: '#f43f5e', descripcion: 'Velocidad y estabilidad general de la plataforma -- también agrupa comentarios genéricos ("buena plataforma") sin un problema específico.' },
+  { key: 'PLATAFORMA_FALLAS', rama: 'plataforma', label: 'Fallas generales', color: '#fb7185', descripcion: 'Fallas o errores generales reportados en la plataforma.' },
+  { key: 'PLATAFORMA_PROGRESO_NOTAS', rama: 'plataforma', label: 'Progreso / notas', color: '#e11d48', descripcion: 'El progreso o las notas no se reflejan bien, entregables con error -- incluye los casos graves de pérdida de materia por un bug.' },
+  { key: 'PLATAFORMA_ACCESO', rama: 'plataforma', label: 'Acceso / licencia', color: '#fda4af', descripcion: 'Problemas de acceso, login o licencia (ej. Coursera) para entrar a la plataforma.' },
+  { key: 'CONTENIDO_PRACTICO', rama: 'contenidos', label: 'Contenido práctico', color: '#f59e0b', descripcion: 'Falta o presencia de ejercicios prácticos, casos reales, actividades dinámicas.' },
+  { key: 'DURACION_CARGA', rama: 'contenidos', label: 'Duración / carga', color: '#a78bfa', descripcion: 'La materia se siente muy corta o con demasiado contenido para el tiempo disponible.' },
+  { key: 'IDIOMA_COURSERA', rama: 'contenidos', label: 'Idioma (Coursera)', color: '#38bdf8', descripcion: 'Dificultad porque los contenidos de Coursera están en inglés.' },
+  { key: 'CONTENIDO_DESACTUALIZADO', rama: 'contenidos', label: 'Contenido desactualizado', color: '#facc15', descripcion: 'Piden actualizar contenidos o herramientas de Coursera/la materia por estar desactualizados.' },
+  { key: 'REQUISITO_PREVIO', rama: 'contenidos', label: 'Requisito previo', color: '#22d3ee', descripcion: 'Dificultad por falta de conocimiento previo necesario para la materia.' },
+  { key: 'PLATAFORMA_TECNICA', rama: 'plataforma', label: 'Plataforma (técnico)', color: '#f43f5e', descripcion: 'Problemas o elogios técnicos del LMS/Coursera: lentitud, errores, progreso que no se refleja, notas mal registradas.' },
+  { key: 'RECOMENDACION_VALOR', rama: 'institucion', label: 'Recomendación / valor', color: '#10b981', descripcion: 'El estudiante recomienda la materia/carrera o valora lo aprendido y su aplicación práctica.' },
+  { key: 'PERCEPCION_INSTITUCIONAL', rama: 'institucion', label: 'Percepción institucional', color: '#fb923c', descripcion: 'Confianza/valores hacia la universidad en general (ej. "solo le importa el pago") -- no demoras puntuales de respuesta, eso es Atención lenta.' },
+  { key: 'ATENCION_LENTA', rama: 'institucion', label: 'Atención lenta (gestores/soporte)', color: '#e879f9', descripcion: 'Demoras específicas de gestores, mesa de ayuda, chat o correo para responder solicitudes.' },
+  { key: 'HORARIOS_FLEXIBILIDAD', rama: 'institucion', label: 'Horarios / flexibilidad', color: '#84cc16', descripcion: 'Piden horarios de clase más flexibles -- distinto de Duración/carga, que es sobre la materia, no el horario.' },
+  { key: 'SIN_SUSTANCIA', rama: null, label: 'Sin sustancia', color: '#64748b', descripcion: 'Comentarios sin contenido informativo real: "todo bien", "n/a", "excelente" sueltos.' },
+];
+
+export const CAMPOS_CUALITATIVO = [
+  { key: 'plataforma', label: 'Plataforma' },
+  { key: 'docente', label: 'Docente' },
+  { key: 'contenidos', label: 'Contenidos' },
+  { key: 'general', label: 'General' },
+];
+
+export const SENTIMIENTOS_CUALITATIVO = [
+  { key: 'positivo', label: 'Positivo', color: '#10b981' },
+  { key: 'negativo', label: 'Negativo', color: '#f43f5e' },
+  { key: 'neutral', label: 'Neutral', color: '#64748b' },
+  { key: 'mixto', label: 'Mixto', color: '#f59e0b' },
+];
+
+/** Preguntas Likert (1-5) del cuestionario cuantitativo, agrupadas por
+ *  sección -- mismas claves que SECCIONES_EVALUACION en el panel, repetidas
+ *  acá para no crear una dependencia circular lib->página. Usadas por la
+ *  Matriz Descriptiva para cruzar sentimiento cualitativo con nota
+ *  cuantitativa real del mismo estudiante. */
+export const LIKERT_KEYS_POR_RAMA = {
+  docente: ['docente_comunicacion', 'docente_creatividad', 'docente_preparacion', 'docente_estrategias_pedagogicas', 'docente_participacion', 'docente_dominio'],
+  contenidos: ['contenidos_ruta_aprendizaje', 'contenidos_utilidad', 'contenidos_informacion_clara', 'contenidos_material', 'contenidos_estrategias_evaluacion'],
+  plataforma: ['plataforma_acceso_recursos', 'plataforma_disponibilidad'],
+};
+
+/** Filas crudas del análisis cualitativo: una fila por (comentario, campo),
+ *  con temas (array), sentimiento, comentario_id (para deduplicar
+ *  estudiantes en la Matriz Descriptiva) y mes_calificacion/categoria_programa
+ *  liviano a propósito -- ver ERR-020 en error-knowledge-base.md: este
+ *  endpoint es compartido por Áreas Temáticas y Matriz Descriptiva, así que
+ *  NO trae los campos Likert/NPS (eso infló el payload e hizo crashear el
+ *  workflow por falta de memoria). Los promedios Likert de la Matriz se
+ *  piden aparte, ya agregados del lado del servidor, con
+ *  fetchMatrizPromedio(mes). Cobertura parcial del histórico (78% al
+ *  2026-09-23, backfill pausado por costo -- ver comment on table en
+ *  Supabase). */
+export async function fetchAnalisisCualitativo() {
+  const { cualitativo } = await llamarPanel_({ accion: 'analisis_cualitativo' });
+  return (cualitativo || []).map((f) => {
+    const r = f.doc_respuestas_consolidada || {};
+    return {
+      comentario_id: f.comentario_id,
+      campo_origen: f.campo_origen,
+      temas: f.temas || [],
+      sentimiento: f.sentimiento,
+      texto: f.texto || '',
+      mes_calificacion: r.mes_calificacion || null,
+      categoria_programa: r.categoria_programa || null,
+    };
+  });
+}
+
+/** Promedios de nota (Likert por rama + NPS) de los comentarios CON tema
+ *  identificable de un mes puntual, agregados del lado del servidor (acción
+ *  n8n `matriz_promedio`) -- separado de fetchAnalisisCualitativo() para no
+ *  repetir el payload bloat que causó ERR-020. Requiere un mes específico
+ *  (no "Todos"), justamente para evitar volver a pedir el dataset Likert
+ *  completo de una sola vez. */
+export async function fetchMatrizPromedio(mes) {
+  const { porCarrera } = await llamarPanel_({ accion: 'matriz_promedio', mes });
+  return porCarrera || [];
+}
+
+/** Borra (invalida) el análisis cualitativo ya calculado de un mes puntual,
+ *  para que esas filas vuelvan a aparecer como "pendientes" y se puedan
+ *  reclasificar a mano en la siguiente sesión de Claude Code -- 2026-09-25,
+ *  a pedido del usuario: quería un botón de "recalcular mes" como el de las
+ *  listas de clase. No reclasifica solo (sigue sin haber API de pago de por
+ *  medio); solo invalida. */
+export async function fetchRecalcularMesCualitativo(mes) {
+  const { filasBorradas } = await llamarPanel_({ accion: 'recalcular_mes_cualitativo', mes });
+  return filasBorradas || 0;
+}
+
+/** Cuántos comentarios (de doc_respuestas_consolidada) todavía no tienen
+ *  fila en doc_analisis_cualitativo, agrupados por mes -- 2026-09-25, a
+ *  pedido del usuario: "sería chevere un botón para resincronizar... a
+ *  veces se hacen cambios/llegan respuestas nuevas". No re-clasifica solo
+ *  (eso lo hace Claude Code manualmente, sin API de pago de por medio -- ver
+ *  comment on table de doc_analisis_cualitativo); esto solo le avisa al
+ *  staff cuántos hay pendientes por mes, para saber cuándo vale la pena
+ *  pedir el reproceso. */
+export async function fetchCualitativoPendientes() {
+  const { totalPendientes, pendientesPorMes } = await llamarPanel_({ accion: 'cualitativo_pendientes' });
+  return { total: totalPendientes || 0, porMes: pendientesPorMes || [] };
+}
+
+/** Tabla de "Gestión" de Estadísticas Cualitativas -- 2026-09-28, a pedido
+ *  del usuario: quería ver de un vistazo los 12 meses del año, de dónde
+ *  sale el dato de cada uno, si ya se procesó y cuándo. `habilitado:false`
+ *  en Enero-Julio (bloque histórico) porque ese bloque todavía no está
+ *  integrado al pipeline de clasificación/invalidación -- se muestra el
+ *  estado real pero la acción de procesar queda deshabilitada hasta que se
+ *  decida activarlo. */
+export async function fetchEstadoMesesCualitativo() {
+  const { meses } = await llamarPanel_({ accion: 'cualitativo_estado_meses' });
+  return meses || [];
 }
 
 /** Bloque histórico (Google Forms, sin cédula/correo/group_id -> no se

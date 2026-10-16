@@ -1,0 +1,28 @@
+-- =============================================================================
+--  Corrección de respuestas "erradas" (2026-10-15) -- YA APLICADO en Supabase
+--  (proyecto csdavuvgqkmvrmntnskz, migración doc_correccion_respuestas).
+--  Se usa desde el panel: Grupos -> Resp. erradas -> "Reasignar a…" -> Guardar
+--  (n8n acción corregir_respuesta -> rpc doc_corregir_respuesta).
+--
+--  Auditoría en doc_respuestas_consolidada:
+--    docente_original, group_id_original, corregido_por, corregido_en
+--
+--  Ver todo lo corregido:
+--    select fecha_respuesta, cedula, correo, materia, docente_original, docente_elegido as docente_actual,
+--           id_grupo_mapeo, corregido_por, corregido_en
+--    from doc_respuestas_con_estudiante where corregido_en is not null order by corregido_en desc;
+--
+--  Revertir UNA corrección (volver al docente/grupo que eligió el estudiante):
+--    update doc_respuestas_consolidada
+--       set docente = docente_original, group_id = group_id_original,
+--           docente_original = null, group_id_original = null, corregido_por = null, corregido_en = null
+--     where id = '<respuesta_id>' and corregido_en is not null;
+-- =============================================================================
+
+-- 2026-10-16: la corrección también fija la MATERIA del grupo elegido (caso
+-- "docente correcto, materia equivocada"); nueva columna materia_original.
+-- Revertir incluyendo la materia:
+--    update doc_respuestas_consolidada
+--       set docente = docente_original, materia = coalesce(materia_original, materia), group_id = group_id_original,
+--           docente_original = null, materia_original = null, group_id_original = null, corregido_por = null, corregido_en = null
+--     where id = '<respuesta_id>' and corregido_en is not null;

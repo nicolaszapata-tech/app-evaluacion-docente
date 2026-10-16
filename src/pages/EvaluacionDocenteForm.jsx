@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import Combobox from '../components/Combobox.jsx';
 import {
   categoriaDeSlug,
   enviarEvaluacionDocente,
@@ -50,8 +49,9 @@ export default function EvaluacionDocenteForm() {
 
   const [cedula, setCedula] = useState('');
   const [correo, setCorreo] = useState('');
-  const [materia, setMateria] = useState('');
-  const [docente, setDocente] = useState('');
+  const [grupoId, setGrupoId] = useState(''); // group_id de la clase elegida
+  const [confirmando, setConfirmando] = useState(false);
+  const refClase = useRef(null);
   const [respuestas, setRespuestas] = useState({});
   const [nps, setNps] = useState('');
   const [comentarioGeneral, setComentarioGeneral] = useState('');
@@ -78,10 +78,15 @@ export default function EvaluacionDocenteForm() {
     })();
   }, [categoria, mesSlug]);
 
-  const groupId = useMemo(() => {
-    const g = opciones.grupos.find((x) => x.subject_name === materia && x.tutor_calendario === docente);
-    return g?.group_id || null;
-  }, [opciones.grupos, materia, docente]);
+  // 2026-10-16: el estudiante elige SU CLASE (un grupo exacto: materia +
+  // docente + horario + fechas) en un solo paso -- ver SelectorClase. Reemplaza
+  // los dos campos materia/docente (2026-10-15 el docente ya dependía de la
+  // materia, pero con dos grupos de la misma materia igual podía elegir el
+  // docente equivocado). materia/docente/group_id salen del grupo elegido.
+  const grupoSel = useMemo(() => opciones.grupos.find((g) => g.group_id === grupoId) || null, [opciones.grupos, grupoId]);
+  const materia = grupoSel?.subject_name || '';
+  const docente = grupoSel?.tutor_calendario || '';
+  const groupId = grupoSel?.group_id || null;
 
   function setRespuesta(key, valor) {
     setRespuestas((prev) => ({ ...prev, [key]: valor }));
@@ -90,8 +95,7 @@ export default function EvaluacionDocenteForm() {
   function validar() {
     const cedulaLimpia = sanitizarCedula(cedula);
     if (!cedulaLimpia) return 'Falta tu número de identificación.';
-    if (!opciones.materias.includes(materia)) return 'Selecciona la materia de la lista.';
-    if (!opciones.docentes.includes(docente)) return 'Selecciona el docente de la lista.';
+    if (!grupoSel) return 'Elige la clase (materia y docente) que vas a evaluar.';
     const todasLasPreguntas = [...PREGUNTAS_PLATAFORMA, ...PREGUNTAS_DOCENTE, ...PREGUNTAS_CONTENIDOS];
     for (const p of todasLasPreguntas) {
       if (!respuestas[p.key]) return 'Faltan preguntas por responder.';
@@ -103,12 +107,22 @@ export default function EvaluacionDocenteForm() {
     return null;
   }
 
-  async function onSubmit(e) {
+  function onSubmit(e) {
     e.preventDefault();
     setError(null);
     const mensaje = validar();
     if (mensaje) { setError(mensaje); return; }
+    setConfirmando(true); // 2026-10-16: confirmación antes de registrar
+  }
 
+  function cambiarClase() {
+    setConfirmando(false);
+    setGrupoId('');
+    refClase.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function enviar() {
+    setError(null);
     setEnviando(true);
     try {
       await enviarEvaluacionDocente({
@@ -130,8 +144,10 @@ export default function EvaluacionDocenteForm() {
           comentario_general: comentarioGeneral.trim() || null,
         },
       });
+      setConfirmando(false);
       setEstado(ESTADOS.ENVIADO);
     } catch (e2) {
+      setConfirmando(false);
       // 23505 = violación del índice único (cedula, group_id) -- ya se
       // envió una evaluación para esta cédula y esta materia/grupo.
       if (e2?.code === '23505') {
@@ -187,14 +203,14 @@ export default function EvaluacionDocenteForm() {
           </Campo>
         </Seccion>
 
-        <Seccion titulo="Materia y docente a evaluar">
-          <Campo etiqueta="Asignatura a evaluar *">
-            <Combobox value={materia} onChange={setMateria} options={opciones.materias} placeholder="Escribe para buscar la materia" />
-          </Campo>
-          <Campo etiqueta="Docente a evaluar *">
-            <Combobox value={docente} onChange={setDocente} options={opciones.docentes} placeholder="Escribe para buscar el docente" />
-          </Campo>
-        </Seccion>
+        <div ref={refClase}>
+          <Seccion
+            titulo="Tu clase"
+            descripcion="Elige la clase que vas a evaluar: la materia con el docente que te la dictó."
+          >
+            <SelectorClase grupos={opciones.grupos} valor={grupoId} onChange={setGrupoId} />
+          </Seccion>
+        </div>
 
         <Seccion titulo="Evaluación de plataforma" descripcion="Marca del 1 al 5, siendo 1 Muy malo y 5 Excelente.">
           {PREGUNTAS_PLATAFORMA.map((p) => (
@@ -244,12 +260,194 @@ export default function EvaluacionDocenteForm() {
           {enviando ? 'Enviando…' : 'Enviar evaluación'}
         </button>
       </form>
+      {confirmando && grupoSel && (
+        <ConfirmarEnvio
+          grupo={grupoSel}
+          enviando={enviando}
+          onConfirmar={enviar}
+          onCambiar={cambiarClase}
+          onCerrar={() => setConfirmando(false)}
+        />
+      )}
     </div>
   );
 }
 
 const inputClase =
   'w-full bg-ink-800 border border-ink-600 rounded-md px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-accent-500 focus:border-accent-500 transition-colors';
+
+/** Fecha 'YYYY-MM-DD' -> 'DD/MM'. */
+function ddmm_(iso) {
+  if (!iso) return '';
+  const p = String(iso).slice(0, 10).split('-');
+  return p.length === 3 ? `${p[2]}/${p[1]}` : '';
+}
+
+/** Hoy en Bogotá como 'YYYY-MM-DD' (para marcar clases que aún no inician). */
+function hoyBogotaForm_() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+function normalizarBusqueda_(t) {
+  return (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+/** Datos de la clase con etiqueta + valor, MISMO tamaño y buen contraste
+ *  (2026-10-16, a pedido del usuario: el horario se veía muy gris y difícil
+ *  de entender). Se usa en la tarjeta, en "Vas a evaluar" y en la
+ *  confirmación, para que se lea igual en las tres. */
+/** Horario en palabras (2026-10-16, a pedido del usuario: los estudiantes no
+ *  entienden las siglas "LMV 6pm", "MJ 6pm S 8am"). Una línea por bloque de
+ *  días, con hora de inicio y fin. Los valores salen de at_franja_sesion
+ *  (app de Tutores y Materias, misma Supabase): todas las sesiones duran
+ *  1 h 45 min. Si llega un código que no está acá, se intenta leer
+ *  "Día H am/pm"; si tampoco, se muestra el código tal cual. */
+const HORARIOS_DESCRIPTIVOS = {
+  'LMV 6pm': ['Lunes, miércoles y viernes de 6:00 a 7:45 p. m.'],
+  'LMV 8pm': ['Lunes, miércoles y viernes de 8:00 a 9:45 p. m.'],
+  'MJ 6pm S 8am': ['Martes y jueves de 6:00 a 7:45 p. m.', 'Sábados de 8:00 a 9:45 a. m.'],
+  'MJ 8pm S 10am': ['Martes y jueves de 8:00 a 9:45 p. m.', 'Sábados de 10:00 a 11:45 a. m.'],
+};
+
+function horarioDescriptivo_(codigo) {
+  if (!codigo) return [];
+  const limpio = String(codigo).trim().replace(/\s+/g, ' ');
+  if (HORARIOS_DESCRIPTIVOS[limpio]) return HORARIOS_DESCRIPTIVOS[limpio];
+  // "Miércoles 8 pm" -> "Miércoles desde las 8:00 p. m."
+  const m = limpio.match(/^([A-Za-zÁÉÍÓÚáéíóú]+)\s+(\d{1,2})\s*(am|pm)$/i);
+  if (m) return [`${m[1].charAt(0).toUpperCase()}${m[1].slice(1).toLowerCase()} desde las ${m[2]}:00 ${m[3].toLowerCase() === 'am' ? 'a. m.' : 'p. m.'}`];
+  return [limpio];
+}
+
+function DatosClase({ g, sinDocente }) {
+  const fechas = g.fecha_calendario_inicio ? `del ${ddmm_(g.fecha_calendario_inicio)} al ${ddmm_(g.fecha_calendario_fin)}` : null;
+  const horario = horarioDescriptivo_(g.horario);
+  const filas = [
+    sinDocente ? null : ['Docente', [g.tutor_calendario]],
+    ['Horario', horario],
+    ['Fechas', fechas ? [fechas] : []],
+  ].filter((x) => x && x[1].length && x[1][0]);
+  return (
+    <div className="mt-1.5 space-y-1 text-sm">
+      {filas.map(([etiqueta, lineas]) => (
+        <div key={etiqueta} className="flex gap-2">
+          <span className="w-16 shrink-0 text-slate-400">{etiqueta}</span>
+          <span className="text-slate-100 font-medium space-y-0.5">
+            {lineas.map((l) => <span key={l} className="block">{l}</span>)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** "Tu clase" en UN paso (2026-10-16, a pedido del usuario): cada tarjeta es
+ *  un grupo exacto de doc_base_de_grupos (materia + docente + horario +
+ *  fechas). Reemplaza los dos campos sueltos materia/docente: así el
+ *  estudiante no puede armar una combinación que no existe, y el horario y
+ *  las fechas le ayudan a reconocer SU grupo cuando hay dos de la misma
+ *  materia con distinto docente. */
+function SelectorClase({ grupos, valor, onChange }) {
+  const [busqueda, setBusqueda] = useState('');
+  const hoy = hoyBogotaForm_();
+  const lista = useMemo(() => {
+    const q = normalizarBusqueda_(busqueda);
+    return grupos
+      .filter((g) => g.group_id && g.subject_name && g.tutor_calendario)
+      .filter((g) => !q || normalizarBusqueda_(`${g.subject_name} ${g.tutor_calendario} ${g.horario || ''} ${horarioDescriptivo_(g.horario).join(' ')}`).includes(q))
+      .map((g) => ({ ...g, porIniciar: !!g.fecha_calendario_inicio && String(g.fecha_calendario_inicio).slice(0, 10) > hoy }))
+      .sort((a, b) => (a.porIniciar - b.porIniciar) || a.subject_name.localeCompare(b.subject_name, 'es') || a.tutor_calendario.localeCompare(b.tutor_calendario, 'es'));
+  }, [grupos, busqueda, hoy]);
+  const elegido = grupos.find((g) => g.group_id === valor) || null;
+
+  if (elegido) {
+    return (
+      <div className="rounded-lg border-2 border-accent-500 bg-accent-500/10 p-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-wider text-accent-400 mb-0.5">✓ Vas a evaluar</div>
+          <div className="text-base font-semibold text-slate-50">{elegido.subject_name}</div>
+          <DatosClase g={elegido} />
+        </div>
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="shrink-0 text-xs font-semibold rounded-md px-2.5 py-1.5 border border-ink-600 text-slate-300 hover:bg-ink-800"
+        >
+          Cambiar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <input
+        type="search"
+        value={busqueda}
+        onChange={(e) => setBusqueda(e.target.value)}
+        placeholder="Busca por materia o por docente…"
+        className={inputClase}
+      />
+      <p className="text-sm leading-snug text-sky-200">
+        Toca tu clase. Si ves dos de la misma materia, fíjate en el <b>docente</b> y en el <b>horario</b> en que viste la clase (los días y la hora).
+      </p>
+      <div className="max-h-96 overflow-y-auto space-y-2 pr-1">
+        {lista.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">No encontramos clases con esa búsqueda.</p>}
+        {lista.map((g) => (
+          <button
+            key={g.group_id}
+            type="button"
+            onClick={() => onChange(g.group_id)}
+            className={
+              'w-full text-left rounded-lg border px-3 py-2 transition-colors ' +
+              (g.porIniciar ? 'border-ink-700 bg-ink-900/60 opacity-70 hover:opacity-100 ' : 'border-ink-600 bg-ink-800 hover:border-accent-500 hover:bg-ink-700/70 ')
+            }
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-base font-semibold text-slate-50">{g.subject_name}</span>
+              {g.porIniciar && <span className="shrink-0 text-xs font-medium text-amber-300">aún no inicia</span>}
+            </div>
+            <DatosClase g={g} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Confirmación antes de enviar (2026-10-16). */
+function ConfirmarEnvio({ grupo, enviando, onConfirmar, onCambiar, onCerrar }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-4" onClick={enviando ? undefined : onCerrar}>
+      <div className="w-full max-w-md rounded-2xl border border-ink-600 bg-ink-900 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <p className="text-[11px] uppercase tracking-wider text-slate-400 mb-2">Antes de enviar, confirma tu clase</p>
+        <p className="text-sm text-slate-200">Vas a evaluar a</p>
+        <p className="text-lg font-semibold text-slate-50 leading-tight">{grupo.tutor_calendario}</p>
+        <p className="text-sm text-slate-200 mt-1">en <b className="text-slate-50">{grupo.subject_name}</b></p>
+        <DatosClase g={grupo} sinDocente />
+        <p className="text-sm text-slate-300 mt-3">¿Es correcto? Si no es tu docente o tu materia, cámbiala antes de enviar.</p>
+        <div className="mt-4 flex flex-col-reverse sm:flex-row gap-2">
+          <button
+            type="button"
+            onClick={onCambiar}
+            disabled={enviando}
+            className="flex-1 rounded-md border border-ink-600 py-2.5 text-sm font-medium text-slate-200 hover:bg-ink-800 disabled:opacity-50"
+          >
+            No, cambiar mi clase
+          </button>
+          <button
+            type="button"
+            onClick={onConfirmar}
+            disabled={enviando}
+            className="flex-1 rounded-md bg-accent-500 hover:bg-accent-400 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {enviando ? 'Enviando…' : 'Sí, enviar evaluación'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Centrado({ children }) {
   return (
@@ -271,10 +469,11 @@ function Seccion({ titulo, descripcion, children }) {
   );
 }
 
-function Campo({ etiqueta, children }) {
+function Campo({ etiqueta, ayuda, children }) {
   return (
     <label className="block space-y-1.5">
       <span className="text-xs text-slate-300">{etiqueta}</span>
+      {ayuda && <span className="block text-[11px] leading-snug text-sky-300/90">{ayuda}</span>}
       {children}
     </label>
   );

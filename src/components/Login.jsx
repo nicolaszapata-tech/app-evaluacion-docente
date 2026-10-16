@@ -32,7 +32,11 @@ export default function Login({ onLogin }) {
             setError(`El correo ${payload.email} no pertenece a un dominio autorizado.`);
             return;
           }
-          const sesion = { email: payload.email, nombre: payload.name, foto: payload.picture };
+          // idToken (2026-10-15): /api/panel lo verifica con Google para las
+          // acciones que devuelven datos personales de estudiantes (correo,
+          // cédula). Dura ~1 hora; después hay que volver a iniciar sesión
+          // para esas acciones (el resto del panel sigue funcionando).
+          const sesion = { email: payload.email, nombre: payload.name, foto: payload.picture, idToken: respuesta.credential };
           guardarSesion(sesion);
           setError(null);
           onLogin(sesion);
