@@ -442,7 +442,7 @@ const COLDEF_GRUPOS = {
   cupos_activos: { t: 'Cupos Activos', center: true },
   cantidad_estudiantes_listas: { t: 'Cant. est. listas', center: true },
   asistentes_min_1_sesion: { t: 'Asist. ≥1', center: true },
-  respuestas_brutas: { t: 'Resp. brutas', center: true, punto: '#cbd5e1', tip: 'Todas las respuestas de esta materia en su carrera y mes, sin importar qué docente eligió el estudiante.' },
+  respuestas_brutas: { t: 'Resp. brutas', center: true, punto: '#cbd5e1', tip: 'Todas las respuestas de esta materia con este profesor, incluidas las erradas. Resp. del grupo = brutas − erradas.' },
   respuestas: { t: 'Resp. del grupo', center: true, punto: '#34d399', tip: 'Respuestas de esta materia con el tutor de este grupo. Es el número que cuenta para el grupo.' },
   respuestas_erradas: { t: 'Resp. erradas', center: true, punto: '#fbbf24', tip: 'Respuestas que no cuentan para ningún grupo: (1) eligieron esta materia con un docente que no la dicta, o (2) eligieron a este tutor con una materia que no dicta este mes. Clic en el número para ver el detalle y corregirlas.' },
   estado_materia: { t: 'Estado', center: true },
@@ -1116,16 +1116,8 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
     });
     return m;
   }, [filasRaw, mapaListas]);
-  // total de la materia (todos los docentes) y tutores que la dictan, por
-  // categoría+mes+materia -- para "Resp. brutas" y el detalle de erradas.
-  const brutasPorMateria = useMemo(() => {
-    const m = {};
-    (conteos || []).forEach((c) => {
-      const k = claveMateriaCarreraMes_(c.categoria_programa, c.mes_calificacion, c.materia);
-      m[k] = (m[k] || 0) + (c.respuestas || 0);
-    });
-    return m;
-  }, [conteos]);
+  // tutores que dictan cada materia, por categoría+mes+materia -- para el
+  // detalle de erradas.
   const tutoresPorMateria = useMemo(() => {
     const m = {};
     (filasRaw || []).forEach((f) => {
@@ -1146,18 +1138,23 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   }, [filasRaw, mapaListas]);
 
   // cada grupo lleva pegado su `respuestas` (nº de evaluaciones de esa
-  // materia en su misma categoría+mes); 0 si todavía no hay ninguna.
+  // materia con su tutor, misma categoría+mes); 0 si todavía no hay ninguna.
+  // 2026-10-19, regla del usuario: "Resp. brutas" es del grupo (materia +
+  // tutor), no de toda la materia -> brutas = del grupo + erradas, y
+  // del grupo = brutas − erradas.
   const filas = useMemo(
     () =>
-      filasRaw.map((f) => ({
+      filasRaw.map((f) => {
+        const respuestas = mapaRespuestas[claveRespuestas_(f.categoria_programa, f.mes_calificacion, f.materia, f.tutor_calendario)] || 0;
+        const erradasDocente = sinGrupo[claveMateriaCarreraMes_(f.categoria_programa, f.mes_calificacion, f.materia)]?.n || 0;
+        const erradasMateria = sinGrupoPorDocente[claveDocenteCarreraMes_(f.categoria_programa, f.mes_calificacion, f.tutor_calendario)]?.n || 0;
+        return {
         ...f,
-        respuestas: mapaRespuestas[claveRespuestas_(f.categoria_programa, f.mes_calificacion, f.materia, f.tutor_calendario)] || 0,
-        respuestas_brutas: brutasPorMateria[claveMateriaCarreraMes_(f.categoria_programa, f.mes_calificacion, f.materia)] || 0,
-        respuestas_erradas_docente: sinGrupo[claveMateriaCarreraMes_(f.categoria_programa, f.mes_calificacion, f.materia)]?.n || 0,
-        respuestas_erradas_materia: sinGrupoPorDocente[claveDocenteCarreraMes_(f.categoria_programa, f.mes_calificacion, f.tutor_calendario)]?.n || 0,
-        respuestas_erradas:
-          (sinGrupo[claveMateriaCarreraMes_(f.categoria_programa, f.mes_calificacion, f.materia)]?.n || 0) +
-          (sinGrupoPorDocente[claveDocenteCarreraMes_(f.categoria_programa, f.mes_calificacion, f.tutor_calendario)]?.n || 0),
+        respuestas,
+        respuestas_brutas: respuestas + erradasDocente + erradasMateria,
+        respuestas_erradas_docente: erradasDocente,
+        respuestas_erradas_materia: erradasMateria,
+        respuestas_erradas: erradasDocente + erradasMateria,
         respuestas_sin_grupo_docente: sinGrupoPorDocente[claveDocenteCarreraMes_(f.categoria_programa, f.mes_calificacion, f.tutor_calendario)] || null,
         grupos_del_tutor: gruposPorTutor[claveDocenteCarreraMes_(f.categoria_programa, f.mes_calificacion, f.tutor_calendario)] || [],
         grupos_carrera_mes: gruposPorCarreraMes[normalizar(f.categoria_programa) + '|' + normalizar(f.mes_calificacion)] || [],
@@ -1167,8 +1164,9 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
         asistentes_min_1_sesion: mapaListas.get(f.group_id)?.asis ?? null,
         listado_url: mapaListas.get(f.group_id)?.listaUrl ?? null,
         estado_materia: estadoMateria_(f.fecha_calendario_inicio, f.fecha_calendario_fin),
-      })),
-    [filasRaw, mapaRespuestas, sinGrupo, sinGrupoPorDocente, gruposPorTutor, gruposPorCarreraMes, brutasPorMateria, tutoresPorMateria, mapaListas]
+        };
+      }),
+    [filasRaw, mapaRespuestas, sinGrupo, sinGrupoPorDocente, gruposPorTutor, gruposPorCarreraMes, tutoresPorMateria, mapaListas]
   );
 
   function toggleEnSet(set, setSet, valor) {
@@ -1451,9 +1449,10 @@ function totalesRespuestasCombo_(ms) {
   };
   const erradasDocente = sumaDistinta(claveMat, 'respuestas_erradas_docente');
   const erradasMateria = sumaDistinta(claveDoc, 'respuestas_erradas_materia');
+  const respuestas = sumaDistinta((m) => claveRespuestas_(m.categoria_programa, m.mes_calificacion, m.materia, m.tutor_calendario), 'respuestas');
   return {
-    respuestas: sumaDistinta((m) => claveRespuestas_(m.categoria_programa, m.mes_calificacion, m.materia, m.tutor_calendario), 'respuestas'),
-    respuestas_brutas: sumaDistinta(claveMat, 'respuestas_brutas'),
+    respuestas,
+    respuestas_brutas: respuestas + erradasDocente + erradasMateria,
     respuestas_erradas_docente: erradasDocente,
     respuestas_erradas_materia: erradasMateria,
     respuestas_erradas: erradasDocente + erradasMateria,
@@ -5960,6 +5959,62 @@ function ChipMaterias({ materias }) {
 
 /** Barras por pregunta (escala 1-5) con marca del promedio institucional --
  *  inspirado en las "hojas de personaje": una barra por atributo. */
+/** Qué mide cada pregunta del bloque Docente y el texto EXACTO que vio el
+ *  estudiante en el formulario (PREGUNTAS_DOCENTE de EvaluacionDocenteForm.jsx)
+ *  -- 2026-10-16, a pedido del usuario: al pasar el mouse por "Comunicación",
+ *  "Creatividad", etc. se ve esto en una ventanita. Si se cambia el texto de
+ *  una pregunta en el formulario, actualizarlo acá también. */
+const DESCRIPCION_PREGUNTA_DOCENTE = {
+  docente_comunicacion: {
+    mide: 'Si el docente se comunica bien con el grupo y le da retroalimentación útil y constructiva sobre su trabajo.',
+    pregunta: '¿El docente tiene habilidades comunicativas y me realiza buena retroalimentación y críticas de forma constructiva?',
+  },
+  docente_creatividad: {
+    mide: 'Si la clase es creativa e interesante y si el docente aprovecha la plataforma para mantener el interés.',
+    pregunta: '¿El docente desarrolló su clase de forma creativa, interesante y usó como herramienta la Plataforma, propiciando mi interés en la clase?',
+  },
+  docente_preparacion: {
+    mide: 'Si el docente llega preparado: la calidad de sus explicaciones y su actitud frente a la enseñanza.',
+    pregunta: '¿La preparación de las clases, las explicaciones y la actitud del docente fueron acordes a la enseñanza del curso y permitieron mi aprendizaje?',
+  },
+  docente_estrategias_pedagogicas: {
+    mide: 'Si el docente usa estrategias didácticas activas: casos, experiencias profesionales, aprendizaje basado en problemas o en proyectos.',
+    pregunta: '¿El docente utiliza estrategias pedagógicas y didácticas como: el análisis de casos, experiencias profesionales, casos exitosos, aprendizaje basado en problemas y aprendizaje basado en proyectos?',
+  },
+  docente_participacion: {
+    mide: 'Si el estudiante tuvo oportunidad de participar en actividades variadas (individuales, grupales y en plataforma).',
+    pregunta: '¿Pude participar en diferentes tipos de actividades (individuales, grupales y en plataforma) para desarrollar mis competencias?',
+  },
+  docente_dominio: {
+    mide: 'Si el estudiante percibe que el docente domina la asignatura y tiene experiencia para enseñarla.',
+    pregunta: '¿Considera que el docente tiene el dominio y la experiencia para la enseñanza de la asignatura?',
+  },
+};
+
+/** Nombre de la pregunta con ventanita al pasar el mouse (o al enfocarlo con
+ *  el teclado): qué mide + la pregunta literal del formulario. */
+function EtiquetaPregunta({ k }) {
+  const info = DESCRIPCION_PREGUNTA_DOCENTE[k];
+  const nombre = ETIQUETA_CORTA[k] || k;
+  if (!info) return <span className="text-slate-200 font-medium">{nombre}</span>;
+  return (
+    <span className="relative group inline-flex items-center gap-1 outline-none" tabIndex={0}>
+      <span className="text-slate-200 font-medium underline decoration-dotted decoration-slate-500 underline-offset-2 cursor-help">{nombre}</span>
+      <span className="text-[10px] text-slate-500 cursor-help" aria-hidden="true">ⓘ</span>
+      <span
+        role="tooltip"
+        className="invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus:visible group-focus:opacity-100 transition-opacity absolute left-0 top-full mt-1.5 z-50 w-80 max-w-[80vw] rounded-lg border border-ink-500 bg-ink-950 p-3 shadow-2xl text-left whitespace-normal"
+      >
+        <span className="block text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Qué mide</span>
+        <span className="block text-xs text-slate-100 leading-snug mb-2">{info.mide}</span>
+        <span className="block text-[10px] uppercase tracking-wider text-slate-500 mb-0.5">Pregunta que respondió el estudiante</span>
+        <span className="block text-xs text-slate-300 italic leading-snug">“{info.pregunta}”</span>
+        <span className="block text-[10px] text-slate-500 mt-2">Escala de 1 (muy malo) a 5 (excelente).</span>
+      </span>
+    </span>
+  );
+}
+
 /** Diferencia con signo y color (+0,15 verde / −0,08 rojo). */
 function DeltaInst({ v, inst }) {
   if (typeof v !== 'number' || typeof inst !== 'number') return null;
@@ -5986,7 +6041,7 @@ function BarrasPorPregunta({ docente, promedioInstitucional, color, keys = SECCI
         return (
           <div key={k}>
             <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-xs mb-1">
-              <span className="text-slate-200 font-medium">{ETIQUETA_CORTA[k] || k}</span>
+              <EtiquetaPregunta k={k} />
               <span className="flex items-baseline gap-2 tabular-nums">
                 <span className="text-slate-400">Docente <b className="text-slate-50">{fmtDec_(v)}</b></span>
                 <span className="text-slate-500">·</span>
@@ -6007,43 +6062,6 @@ function BarrasPorPregunta({ docente, promedioInstitucional, color, keys = SECCI
         <span className="flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: color }} />Docente (escala 1 a 5)</span>
         <span className="flex items-center gap-1.5"><span className="w-0.5 h-3 bg-slate-200" />Promedio institucional</span>
       </div>
-    </div>
-  );
-}
-
-/** Resumen por sección (Docente / Contenidos / Plataforma): promedio del
- *  docente vs. institucional y diferencia -- 2026-10-16, para consolidar en
- *  la ficha la comparación general además del detalle por pregunta. */
-const ORDEN_SECCIONES_FICHA = ['docente', 'contenidos', 'plataforma'];
-function ResumenSecciones({ docente, promedioInstitucional }) {
-  return (
-    <div className="grid sm:grid-cols-3 gap-3">
-      {ORDEN_SECCIONES_FICHA.map((key) => {
-        const sec = SECCIONES_EVALUACION.find((x) => x.key === key);
-        const v = docente.porSeccion?.[key];
-        const inst = promedioInstitucional.porSeccion?.[key];
-        return (
-          <div key={key} className="rounded-xl border border-ink-600 bg-ink-800/60 p-3" style={{ borderLeft: `3px solid ${sec.color}` }}>
-            <div className="text-[11px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: sec.color }}>
-              {sec.titulo.replace('Satisfacción ', '')}
-              {key !== 'docente' && <span className="normal-case tracking-normal font-normal text-slate-500"> · de la materia</span>}
-            </div>
-            <div className="flex items-baseline justify-between gap-2 tabular-nums">
-              <div>
-                <div className="text-[11px] text-slate-400">Docente</div>
-                <div className="text-2xl font-bold" style={{ color: colorNota15_(v) }}>{fmtDec_(v)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-[11px] text-slate-400">Institucional</div>
-                <div className="text-lg font-semibold text-slate-200">{fmtDec_(inst)}</div>
-              </div>
-            </div>
-            <div className="text-xs mt-1">
-              <DeltaInst v={v} inst={inst} /> <span className="text-slate-500">vs. institucional</span>
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -6232,10 +6250,6 @@ function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccion
               : <>Muestra pequeña: {textoCobertura_(docente)}. Tómalo como referencia; con pocas respuestas los números pueden moverse bastante.</>}
           </div>
         )}
-        <div className="mb-5">
-          <p className="text-xs text-slate-400 mb-2">Resumen por sección · docente vs. institucional ({etiquetaPeriodo})</p>
-          <ResumenSecciones docente={docente} promedioInstitucional={promedioInstitucional} />
-        </div>
         <div className="grid md:grid-cols-2 gap-6 items-center">
           <div>
             <p className="text-xs text-slate-400 mb-3">Bloque Docente, pregunta por pregunta</p>
@@ -6248,20 +6262,6 @@ function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccion
               <span className="flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm" style={{ backgroundColor: color }} />{docente.nombre}</span>
               <span className="flex items-center gap-1.5"><span className="w-3 border-t border-dashed border-slate-300" />Institucional</span>
             </div>
-          </div>
-        </div>
-        <div className="mt-6 pt-4 border-t border-ink-700">
-          <p className="text-xs text-slate-400 mb-3">Contenidos y plataforma, pregunta por pregunta <span className="text-slate-500">(califican la materia y la plataforma, no al docente)</span></p>
-          <div className="grid md:grid-cols-2 gap-6">
-            {['contenidos', 'plataforma'].map((key) => {
-              const sec = SECCIONES_EVALUACION.find((x) => x.key === key);
-              return (
-                <div key={key}>
-                  <p className="text-[11px] uppercase tracking-wider font-semibold mb-2" style={{ color: sec.color }}>{sec.titulo.replace('Satisfacción ', '')}</p>
-                  <BarrasPorPregunta docente={docente} promedioInstitucional={promedioInstitucional} color={sec.color} keys={sec.keys} />
-                </div>
-              );
-            })}
           </div>
         </div>
         </>
