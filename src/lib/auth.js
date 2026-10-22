@@ -20,6 +20,8 @@ const CORREOS_PERMITIDOS = new Set([
   'laura.mora@lanuevaamerica.edu.co',
   'david.cristancho@lanuevaamerica.edu.co',
   'julian.garcia@lanuevaamerica.edu.co',
+  'andres.valero@kuepa.edu.co',
+  'andres.valero@lanuevaamerica.edu.co',
 ]);
 const SESSION_KEY = 'evaluacion_docente_sesion';
 
