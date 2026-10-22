@@ -1668,7 +1668,7 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
                 // Gestión mira el total COMBINADO: el aula compartida tiene un solo
                 // conjunto de respuestas; si no, un miembro marcaría "sin
                 // respuestas" aunque su aula sí las tenga.
-                contenido = <BotonGestion f={{ ...m, respuestas: tot.respuestas, carreras_combo: carrerasCombo }} estadoAlerta={alertasPorGrupo?.get(m.group_id) || null} onAbrir={onAbrirGestion} />;
+                contenido = <BotonGestion f={{ ...m, respuestas: tot.respuestas, carreras_combo: carrerasCombo, miembros_combo: ms.map((x) => ({ carrera: x.categoria_programa, id_grupo_mapeo: x.id_grupo_mapeo, group_id: x.group_id, listado_url: x.listado_url || null })) }} estadoAlerta={alertasPorGrupo?.get(m.group_id) || null} onAbrir={onAbrirGestion} />;
               } else if (key === 'respuestas_erradas') {
                 contenido = <CeldaRespuestasErradas f={{ ...m, respuestas_erradas: tot.respuestas_erradas, respuestas_erradas_docente: tot.respuestas_erradas_docente, respuestas_erradas_materia: tot.respuestas_erradas_materia }} lista={tot.conErradas} listaMateria={tot.conErradasMateria} />;
               } else if (key === 'respuestas' || key === 'respuestas_brutas') {
@@ -2038,6 +2038,37 @@ function textoWhatsappGestion_(tipo, f, urlEncuesta, urlsEncuesta) {
     );
   } else {
     return '';
+  }
+  // 2026-10-22, a pedido del usuario: en grupos combinados, un bloque por
+  // grupo con SU lista, SU grupo en el SIS y SU link, para que no haya
+  // ninguna duda de qué link va con qué estudiantes.
+  const miembros = f.miembros_combo || [];
+  if (miembros.length > 1) {
+    partes.push('');
+    partes.push(`👥 *Esta clase junta ${miembros.length} grupos.* Cada grupo tiene su propia lista, su propio grupo en el SIS y su propio link de evaluación. *No los mezcles.*`);
+    const listaCompartida = new Set(miembros.map((m) => m.listado_url || '')).size === 1 && !!miembros[0].listado_url;
+    miembros.forEach((m, i) => {
+      const urlLink = m.carrera && f.mes_calificacion ? urlsEncuesta?.find((x) => x.carrera === m.carrera)?.url || urlEncuesta : urlEncuesta;
+      partes.push('');
+      partes.push('━━━━━━━━━━━━━━');
+      partes.push(`*GRUPO ${i + 1} · ${(m.carrera || '').toUpperCase()}*${m.id_grupo_mapeo ? ` (${m.id_grupo_mapeo})` : ''}`);
+      if (m.listado_url) partes.push(`📋 Lista de clase: ${m.listado_url}`);
+      if (m.group_id) partes.push(`🖥️ Grupo en el SIS: ${urlSisGrupo(m.group_id)}`);
+      if (urlLink) partes.push(`📝 Link de evaluación para *estos* estudiantes: ${urlLink}`);
+    });
+    partes.push('━━━━━━━━━━━━━━');
+    partes.push('');
+    partes.push('✅ *Qué hacer:*');
+    miembros.forEach((m, i) => {
+      partes.push(`${i + 1}. A los estudiantes del *Grupo ${i + 1} (${m.carrera || ''})* envíales *solo* el link del Grupo ${i + 1}.`);
+    });
+    if (listaCompartida) {
+      partes.push('');
+      partes.push('ℹ️ Los grupos comparten la misma lista de clase. Para saber de qué grupo es cada estudiante, revisa el grupo en el SIS.');
+    }
+    partes.push('');
+    partes.push('¡Gracias por tu gestión! 🙌');
+    return partes.join('\n');
   }
   if (urlsEncuesta && urlsEncuesta.length > 1) {
     partes.push('👥 Es un grupo combinado: cada estudiante debe usar el link de *su* carrera:');
