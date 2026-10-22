@@ -32,7 +32,7 @@ import {
   fetchAlertasCierre,
   formatearFechaDDMMYYYY,
   fetchMesesActivosMapa,
-  fetchMesesDisponibles,
+  fetchMesesDisponiblesPanel,
   fetchStatsYCrudo,
   fetchConteosRespuestas,
   fetchRespuestasErradasDetalle,
@@ -81,7 +81,7 @@ export default function EvaluacionDocentePanel() {
   const [recargaKey, setRecargaKey] = useState(0);
 
   async function cargarMeses() {
-    const [mesesData, activosData] = await Promise.all([fetchMesesDisponibles(), fetchMesesActivosMapa()]);
+    const [mesesData, activosData] = await Promise.all([fetchMesesDisponiblesPanel(), fetchMesesActivosMapa()]);
     // Orden CRONOLÓGICO (por índice en MESES_ES), no alfabético -- 2026-09-08,
     // bug reportado por el usuario: con .sort() por defecto "Octubre" queda
     // antes que "Septiembre" (O < S alfabéticamente). Mismo criterio que ya

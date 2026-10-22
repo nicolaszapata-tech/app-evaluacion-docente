@@ -1,6 +1,6 @@
 import { supabase } from './supabase.js';
 import { normalizar } from './normalizar.js';
-import { leerSesion, cerrarSesion } from './auth.js';
+import { cerrarSesion } from './auth.js';
 
 /** Las 4 categorías fijas que ya trae doc_base_de_grupos
  *  (categoria_programa) -- los links se arman por categoría, NO por programa
@@ -64,8 +64,7 @@ export async function fetchMesesDisponibles() {
 
 /** mes_calificacion -> activo, para el panel (evita una consulta por mes). */
 export async function fetchMesesActivosMapa() {
-  const { data, error } = await supabase.from('doc_meses_activos').select('mes_calificacion, activo');
-  if (error) throw error;
+  const data = await leerDatos_('meses_activos');
   const mapa = {};
   (data || []).forEach((r) => { mapa[r.mes_calificacion] = !!r.activo; });
   return mapa;
@@ -118,16 +117,14 @@ export function formatearFechaDDMMYYYY(iso) {
 }
 
 export async function fetchGruposEvaluacionDocente() {
-  const { data, error } = await supabase
-    .from('doc_base_de_grupos')
-    .select(
-      'id_grupo_mapeo, mes_calificacion, group_id, section_id, categoria_programa, materia, cuatrimestre, horario, fecha_calendario_inicio, fecha_calendario_fin, tutor_calendario, cupos_activos'
-    )
-    .order('mes_calificacion', { ascending: true })
-    .order('categoria_programa', { ascending: true })
-    .order('id_grupo_mapeo', { ascending: true });
-  if (error) throw error;
-  return data || [];
+  return leerDatos_('grupos');
+}
+
+/** Meses con grupos, para el panel (el formulario usa fetchMesesDisponibles,
+ *  lectura pública). */
+export async function fetchMesesDisponiblesPanel() {
+  const data = await leerDatos_('meses_disponibles');
+  return Array.from(new Set(data.map((r) => r.mes_calificacion).filter(Boolean)));
 }
 
 /**
@@ -137,14 +134,7 @@ export async function fetchGruposEvaluacionDocente() {
  * dos concuerden. Solo las que se marcaron "+ Evaluación Docente".
  */
 export async function fetchGruposCombinadosEvalDocente() {
-  const { data, error } = await supabase
-    .from('grupos_combinados')
-    .select('id, mes_calificacion, member_group_ids, member_mapeos, etiqueta, carreras, subject_name, tutor_calendario, horario, creado_en')
-    .eq('activo', true)
-    .eq('aplica_evaluacion_docente', true)
-    .order('creado_en', { ascending: true });
-  if (error) throw error;
-  return data || [];
+  return leerDatos_('combinados');
 }
 
 /** Directorio de docentes (tabla compartida `directutor_tutores_base_de_directorio`,
@@ -163,12 +153,7 @@ export async function recargarDirectorioDocente() {
 }
 
 export async function fetchDirectorioTutores() {
-  const { data, error } = await supabase
-    .from('directutor_tutores_base_de_directorio')
-    .select('id_docente, nombres_completos, docente, celular, correo_institucional, docente_activo')
-    .order('nombres_completos', { ascending: true });
-  if (error) throw error;
-  return data || [];
+  return leerDatos_('directorio');
 }
 
 /** Datos de la lista del docente por group_id, traídos de
@@ -177,10 +162,7 @@ export async function fetchDirectorioTutores() {
  *    cant = cantidad_estudiantes_listas · asis = asistentes_min_1_sesion
  *    listaUrl = listado_url (link a la hoja de la lista de clase) */
 export async function fetchCantEstListasPorGrupo() {
-  const { data, error } = await supabase
-    .from('asap_seguimiento_grupo')
-    .select('group_id, cantidad_estudiantes_listas, asistentes_min_1_sesion, listado_url');
-  if (error) throw error;
+  const data = await leerDatos_('listas');
   const m = new Map();
   (data || []).forEach((r) => {
     if (r.group_id != null) {
@@ -242,23 +224,49 @@ export async function enviarEvaluacionDocente({ identidad, respuestas }) {
  *  criptográfica real, pero ya no depende de un secreto público estático.
  */
 async function llamarPanel_(body) {
-  const sesion = leerSesion();
+  // 2026-10-22: la sesión va en la cookie HttpOnly (api/_lib/sesion.js); el
+  // navegador ya no manda ni declara el correo.
   const respuesta = await fetch('/api/panel', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, correoSesion: sesion?.email || null, idToken: sesion?.idToken || null }),
+    body: JSON.stringify(body),
   });
-  // 2026-10-22: correo fuera de la lista (p. ej. una pestaña abierta desde
-  // antes de restringir el acceso) -> se cierra la sesión y vuelve al login.
-  if (respuesta.status === 403) {
-    cerrarSesion();
-    window.location.reload();
-  }
+  await expulsarSiNoAutorizado_(respuesta);
   if (!respuesta.ok) {
     const texto = await respuesta.text().catch(() => '');
     throw new Error(`El servidor respondió HTTP ${respuesta.status}. ${texto}`.trim());
   }
   return respuesta.json();
+}
+
+/** Sesión vencida o correo sin acceso -> vuelve al login. */
+async function expulsarSiNoAutorizado_(respuesta) {
+  if (respuesta.status === 401 || respuesta.status === 403) {
+    await cerrarSesion();
+    window.location.reload();
+    throw new Error('Sesión no autorizada.');
+  }
+}
+
+/** Lecturas del panel (2026-10-22): las hace /api/datos en el servidor, con
+ *  la sesión verificada -- antes iban directo a Supabase con la clave
+ *  pública y cualquiera podía leerlas sin login. `consulta` es un nombre de
+ *  la lista fija de api/datos.js. */
+async function leerDatos_(consulta, extra = {}) {
+  const respuesta = await fetch('/api/datos', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ consulta, ...extra }),
+  });
+  await expulsarSiNoAutorizado_(respuesta);
+  if (!respuesta.ok) {
+    const texto = await respuesta.text().catch(() => '');
+    throw new Error(`No se pudieron leer los datos (${consulta}): HTTP ${respuesta.status}. ${texto}`.trim());
+  }
+  const { filas } = await respuesta.json();
+  return filas || [];
 }
 
 export async function togglearMesActivo(mes, activo) {
@@ -297,12 +305,7 @@ export async function enviarReporteGestion(payload) {
  *  SELECT público) -- para marcar en la tabla los grupos ya avisados y para
  *  el panel "Alertas de cierre" del rail derecho. */
 export async function fetchAlertasCierre() {
-  const { data, error } = await supabase
-    .from('doc_alertas_cierre')
-    .select('id, group_id, id_grupo_mapeo, categoria_programa, mes_calificacion, materia, tutor_calendario, canal, tipo, destinatario, enviado_por, estado, detalle, respuestas_antes, creado_en')
-    .order('creado_en', { ascending: false });
-  if (error) throw error;
-  return data || [];
+  return leerDatos_('alertas');
 }
 
 /** Botón "Actualizar datos de grupos" del panel (2026-09-08, a pedido del
@@ -326,13 +329,8 @@ export async function sincronizarBaseGrupos() {
  *  botón de sincronizarBaseGrupos(). Lectura pública directa (RLS SELECT),
  *  igual que fetchGruposEvaluacionDocente. */
 export async function fetchUltimoSyncBaseGrupos() {
-  const { data, error } = await supabase
-    .from('doc_base_de_grupos')
-    .select('actualizado_en')
-    .order('actualizado_en', { ascending: false })
-    .limit(1);
-  if (error) throw error;
-  return data?.[0]?.actualizado_en || null;
+  const data = await leerDatos_('ultimo_sync_grupos');
+  return data[0]?.actualizado_en || null;
 }
 
 /** "hace 5 min" / "hace 2 h" / fecha completa si ya pasó más de una semana
@@ -359,10 +357,7 @@ export function formatearHaceTiempo(isoConHora) {
  *  (RLS SELECT, igual que fetchMesesActivosMapa); la escritura sí pasa por
  *  el webhook de n8n (ver actualizarEstudiantesActivos). */
 export async function fetchEstudiantesActivosMapa() {
-  const { data, error } = await supabase
-    .from('doc_estudiantes_activos')
-    .select('mes_calificacion, estudiantes_activos');
-  if (error) throw error;
+  const data = await leerDatos_('estudiantes_activos');
   const mapa = {};
   (data || []).forEach((r) => { mapa[r.mes_calificacion] = r.estudiantes_activos; });
   return mapa;
@@ -626,9 +621,8 @@ const TABLA_HISTORICO_ENERO_JULIO = 'doc_historico_enero_julio_2026';
  *  directo de Supabase (tabla SELECT-pública, sin PII) en vez de por el
  *  webhook de n8n -- no hay nada privado que proteger acá. */
 export async function fetchCrudoHistoricoEneroJulio() {
-  const columnas = ['categoria_programa', ...PREGUNTAS_LIKERT_KEYS, 'nps_recomendaria'].join(',');
-  const { data, error } = await supabase.from(TABLA_HISTORICO_ENERO_JULIO).select(columnas);
-  if (error) throw error;
+  const columnas = ['categoria_programa', ...PREGUNTAS_LIKERT_KEYS, 'nps_recomendaria'];
+  const data = await leerDatos_('historico', { columnas }); // TABLA_HISTORICO_ENERO_JULIO
   const porCategoria = {};
   (data || []).forEach((r) => {
     if (!r.categoria_programa) return;

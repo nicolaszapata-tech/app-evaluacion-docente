@@ -1,63 +1,47 @@
 /**
- * Login "suave" del lado del cliente con Google Identity Services -- NO es
- * una barrera de seguridad real (ver comentario equivalente en
- * APP_GRUPOS_ACTIVOS/src/lib/auth.js), solo evita que cualquiera con el link
- * del panel entre sin ser staff de Kuepa/La Nueva América. La seguridad real
- * de los datos (cédulas, respuestas) la da RLS en Supabase (INSERT-only para
- * anon, sin SELECT), no este login.
+ * Sesión del panel staff, lado navegador (2026-10-22).
+ *
+ * El navegador ya NO decide quién entra: manda el ID token de Google a
+ * /api/sesion y el servidor lo verifica contra Google y contra la lista de
+ * correos permitidos (api/_lib/sesion.js), y deja una cookie HttpOnly que
+ * JavaScript no puede leer ni falsificar. Acá solo se consulta/abre/cierra
+ * esa sesión. La lista de correos ya no se publica en el bundle.
  */
 
-// 2026-10-22, a pedido del usuario: ya no entra todo el dominio, solo estos
-// correos (en minúscula). Para dar o quitar acceso, editar esta lista y
-// redesplegar -- la usan el login y /api/panel.
-const CORREOS_PERMITIDOS = new Set([
-  'laura.bahamon@kuepa.edu.co',
-  'laura.bahamon@lanuevaamerica.edu.co',
-  'nicolas.zapata@kuepa.edu.co',
-  'nicolas.zapata@lanuevaamerica.edu.co',
-  'ana.ruiz@kuepa.edu.co',
-  'ana.ruiz@lanuevaamerica.edu.co',
-  'laura.mora@lanuevaamerica.edu.co',
-  'david.cristancho@lanuevaamerica.edu.co',
-  'julian.garcia@lanuevaamerica.edu.co',
-  'andres.valero@kuepa.edu.co',
-  'andres.valero@lanuevaamerica.edu.co',
-]);
-const SESSION_KEY = 'evaluacion_docente_sesion';
-
-export function correoPermitido(email) {
-  if (!email) return false;
-  return CORREOS_PERMITIDOS.has(String(email).trim().toLowerCase());
-}
-
-export function decodificarJwt(token) {
-  const payload = token.split('.')[1];
-  const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-  const json = decodeURIComponent(
-    atob(base64)
-      .split('')
-      .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-      .join('')
-  );
-  return JSON.parse(json);
-}
-
-export function leerSesion() {
+/** Sesión actual según el servidor -> { email, nombre, foto } o null. */
+export async function obtenerSesion() {
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const sesion = JSON.parse(raw);
-    if (!sesion.email || !correoPermitido(sesion.email)) return null;
-    return sesion;
+    const r = await fetch('/api/sesion', { credentials: 'same-origin', cache: 'no-store' });
+    if (!r.ok) return null;
+    return await r.json();
   } catch {
     return null;
   }
 }
 
-export function guardarSesion(sesion) {
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(sesion));
+/** Abre sesión con el ID token de Google. Lanza Error con el mensaje del
+ *  servidor si el correo no tiene acceso. */
+export async function iniciarSesion(idToken) {
+  const r = await fetch('/api/sesion', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken }),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.error || 'No se pudo iniciar sesión.');
+  return out;
 }
 
-export function cerrarSesion() {
-  sessionStorage.removeItem(SESSION_KEY);
+export async function cerrarSesion() {
+  try {
+    await fetch('/api/sesion', { method: 'DELETE', credentials: 'same-origin' });
+  } catch {
+    // sin red: la cookie igual vence sola
+  }
+  try {
+    sessionStorage.removeItem('evaluacion_docente_sesion'); // sesión del esquema anterior
+  } catch {
+    // sin acceso a storage
+  }
 }

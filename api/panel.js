@@ -11,45 +11,17 @@
  *  que Vite nunca empaqueta y que solo existen en el runtime server-side de
  *  esta función. El navegador ya no conoce el secreto en absoluto.
  *
- *  Verificación mínima de sesión: se exige que el request traiga el correo
- *  de la sesión de Google del staff (guardado client-side por lib/auth.js)
- *  y que esté en la lista de correos permitidos (correoPermitido). No es
- *  verificación criptográfica del JWT de Google (eso sería un paso más,
- *  pendiente si hace falta más adelante) -- pero ya no depende de un
- *  secreto estático público, que era el problema real.
+ *  Sesión: desde 2026-10-22 se exige la cookie HttpOnly firmada que entrega
+ *  /api/sesion tras verificar el login de Google y la lista de correos
+ *  permitidos (api/_lib/sesion.js).
  * ============================================================================
  */
 
-import { correoPermitido } from '../src/lib/auth.js';
+import { leerSesion } from './_lib/sesion.js';
 
 const WEBHOOK_BASE = process.env.N8N_WEBHOOK_BASE;
 const SYNC_SECRET = process.env.SYNC_SECRET_EVALUACION_DOCENTE;
 const WEBHOOK_PATH = 'evaluacion-docente-panel';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
-
-/** Acciones que devuelven datos personales de estudiantes (correo, cédula):
- *  2026-10-15. Para estas NO basta el correo que manda el navegador (se
- *  puede inventar); se exige el ID token de Google de la sesión y se
- *  verifica acá contra Google (firma, audiencia = nuestro client id,
- *  vencimiento, correo verificado y dominio permitido). */
-const ACCIONES_CON_DATOS_PERSONALES = new Set(['respuestas_erradas_detalle', 'corregir_respuesta']);
-
-async function correoVerificadoGoogle(idToken) {
-  if (!idToken || !GOOGLE_CLIENT_ID) return null;
-  try {
-    const r = await fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(idToken));
-    if (!r.ok) return null;
-    const p = await r.json();
-    if (p.aud !== GOOGLE_CLIENT_ID) return null;
-    if (!['accounts.google.com', 'https://accounts.google.com'].includes(p.iss)) return null;
-    if (!(p.email_verified === true || p.email_verified === 'true')) return null;
-    if (!p.exp || Number(p.exp) * 1000 < Date.now()) return null;
-    if (!correoPermitido(p.email)) return null;
-    return p.email;
-  } catch {
-    return null;
-  }
-}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -62,18 +34,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { correoSesion: correoDeclarado, idToken, ...body } = req.body || {};
-  let correoSesion = correoDeclarado;
-  if (ACCIONES_CON_DATOS_PERSONALES.has(body.accion)) {
-    correoSesion = await correoVerificadoGoogle(idToken);
-    if (!correoSesion) {
-      res.status(401).json({ error: 'sesion_expirada', detalle: 'Inicia sesión de nuevo con Google para ver datos de estudiantes.' });
-      return;
-    }
-  } else if (!correoPermitido(correoSesion)) {
+  // 2026-10-22: TODA acción exige la cookie de sesión verificada en el
+  // servidor (api/_lib/sesion.js). El correo ya no lo declara el navegador.
+  const sesion = leerSesion(req);
+  if (!sesion) {
     res.status(403).json({ error: 'Sesión no autorizada.' });
     return;
   }
+  const { correoSesion: _ignorado, idToken: _ignorado2, ...body } = req.body || {};
+  const correoSesion = sesion.email;
 
   try {
     const respuesta = await fetch(`${WEBHOOK_BASE}/${WEBHOOK_PATH}`, {

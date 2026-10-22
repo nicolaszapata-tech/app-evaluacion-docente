@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { decodificarJwt, correoPermitido, guardarSesion } from '../lib/auth.js';
+import { iniciarSesion } from '../lib/auth.js';
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -25,23 +25,15 @@ export default function Login({ onLogin }) {
 
     window.google.accounts.id.initialize({
       client_id: CLIENT_ID,
-      callback: (respuesta) => {
+      // 2026-10-22: quien decide si el correo entra es el servidor
+      // (/api/sesion verifica el token con Google y la lista de correos).
+      callback: async (respuesta) => {
         try {
-          const payload = decodificarJwt(respuesta.credential);
-          if (!correoPermitido(payload.email)) {
-            setError(`El correo ${payload.email} no tiene acceso al panel de Evaluación Docente.`);
-            return;
-          }
-          // idToken (2026-10-15): /api/panel lo verifica con Google para las
-          // acciones que devuelven datos personales de estudiantes (correo,
-          // cédula). Dura ~1 hora; después hay que volver a iniciar sesión
-          // para esas acciones (el resto del panel sigue funcionando).
-          const sesion = { email: payload.email, nombre: payload.name, foto: payload.picture, idToken: respuesta.credential };
-          guardarSesion(sesion);
+          const sesion = await iniciarSesion(respuesta.credential);
           setError(null);
           onLogin(sesion);
-        } catch {
-          setError('No se pudo procesar el inicio de sesión. Intenta de nuevo.');
+        } catch (e) {
+          setError(e.message || 'No se pudo procesar el inicio de sesión. Intenta de nuevo.');
         }
       },
     });
@@ -64,7 +56,7 @@ export default function Login({ onLogin }) {
         </div>
         <h1 className="text-lg font-semibold text-slate-50">Evaluación Docente</h1>
         <p className="text-sm text-slate-400 mt-1.5 mb-8">
-          Calidad Académica HE — acceso restringido a cuentas Kuepa / La Nueva América.
+          Calidad Académica HE — acceso restringido a personas autorizadas.
         </p>
 
         {!CLIENT_ID ? (
