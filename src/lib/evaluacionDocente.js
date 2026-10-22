@@ -1,6 +1,6 @@
 import { supabase } from './supabase.js';
 import { normalizar } from './normalizar.js';
-import { leerSesion } from './auth.js';
+import { leerSesion, cerrarSesion } from './auth.js';
 
 /** Las 4 categorías fijas que ya trae doc_base_de_grupos
  *  (categoria_programa) -- los links se arman por categoría, NO por programa
@@ -248,6 +248,12 @@ async function llamarPanel_(body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, correoSesion: sesion?.email || null, idToken: sesion?.idToken || null }),
   });
+  // 2026-10-22: correo fuera de la lista (p. ej. una pestaña abierta desde
+  // antes de restringir el acceso) -> se cierra la sesión y vuelve al login.
+  if (respuesta.status === 403) {
+    cerrarSesion();
+    window.location.reload();
+  }
   if (!respuesta.ok) {
     const texto = await respuesta.text().catch(() => '');
     throw new Error(`El servidor respondió HTTP ${respuesta.status}. ${texto}`.trim());
