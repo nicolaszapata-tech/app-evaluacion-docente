@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { decodificarJwt, dominioPermitido, guardarSesion } from '../lib/auth.js';
+import { decodificarJwt, correoPermitido, guardarSesion } from '../lib/auth.js';
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -28,8 +28,8 @@ export default function Login({ onLogin }) {
       callback: (respuesta) => {
         try {
           const payload = decodificarJwt(respuesta.credential);
-          if (!dominioPermitido(payload.email)) {
-            setError(`El correo ${payload.email} no pertenece a un dominio autorizado.`);
+          if (!correoPermitido(payload.email)) {
+            setError(`El correo ${payload.email} no tiene acceso al panel de Evaluación Docente.`);
             return;
           }
           // idToken (2026-10-15): /api/panel lo verifica con Google para las

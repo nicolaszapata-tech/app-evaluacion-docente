@@ -13,14 +13,14 @@
  *
  *  Verificación mínima de sesión: se exige que el request traiga el correo
  *  de la sesión de Google del staff (guardado client-side por lib/auth.js)
- *  y que su dominio sea uno de los permitidos (dominioPermitido). No es
+ *  y que esté en la lista de correos permitidos (correoPermitido). No es
  *  verificación criptográfica del JWT de Google (eso sería un paso más,
  *  pendiente si hace falta más adelante) -- pero ya no depende de un
  *  secreto estático público, que era el problema real.
  * ============================================================================
  */
 
-import { dominioPermitido } from '../src/lib/auth.js';
+import { correoPermitido } from '../src/lib/auth.js';
 
 const WEBHOOK_BASE = process.env.N8N_WEBHOOK_BASE;
 const SYNC_SECRET = process.env.SYNC_SECRET_EVALUACION_DOCENTE;
@@ -44,7 +44,7 @@ async function correoVerificadoGoogle(idToken) {
     if (!['accounts.google.com', 'https://accounts.google.com'].includes(p.iss)) return null;
     if (!(p.email_verified === true || p.email_verified === 'true')) return null;
     if (!p.exp || Number(p.exp) * 1000 < Date.now()) return null;
-    if (!dominioPermitido(p.email)) return null;
+    if (!correoPermitido(p.email)) return null;
     return p.email;
   } catch {
     return null;
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
       res.status(401).json({ error: 'sesion_expirada', detalle: 'Inicia sesión de nuevo con Google para ver datos de estudiantes.' });
       return;
     }
-  } else if (!dominioPermitido(correoSesion)) {
+  } else if (!correoPermitido(correoSesion)) {
     res.status(403).json({ error: 'Sesión no autorizada.' });
     return;
   }

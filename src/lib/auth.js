@@ -7,13 +7,25 @@
  * anon, sin SELECT), no este login.
  */
 
-const ALLOWED_DOMAINS = ['lanuevaamerica.edu.co', 'kuepa.edu.co'];
+// 2026-10-22, a pedido del usuario: ya no entra todo el dominio, solo estos
+// correos (en minúscula). Para dar o quitar acceso, editar esta lista y
+// redesplegar -- la usan el login y /api/panel.
+const CORREOS_PERMITIDOS = new Set([
+  'laura.bahamon@kuepa.edu.co',
+  'laura.bahamon@lanuevaamerica.edu.co',
+  'nicolas.zapata@kuepa.edu.co',
+  'nicolas.zapata@lanuevaamerica.edu.co',
+  'ana.ruiz@kuepa.edu.co',
+  'ana.ruiz@lanuevaamerica.edu.co',
+  'laura.mora@lanuevaamerica.edu.co',
+  'david.cristancho@lanuevaamerica.edu.co',
+  'julian.garcia@lanuevaamerica.edu.co',
+]);
 const SESSION_KEY = 'evaluacion_docente_sesion';
 
-export function dominioPermitido(email) {
+export function correoPermitido(email) {
   if (!email) return false;
-  const dominio = email.split('@')[1]?.toLowerCase();
-  return !!dominio && ALLOWED_DOMAINS.includes(dominio);
+  return CORREOS_PERMITIDOS.has(String(email).trim().toLowerCase());
 }
 
 export function decodificarJwt(token) {
@@ -33,7 +45,7 @@ export function leerSesion() {
     const raw = sessionStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const sesion = JSON.parse(raw);
-    if (!sesion.email || !dominioPermitido(sesion.email)) return null;
+    if (!sesion.email || !correoPermitido(sesion.email)) return null;
     return sesion;
   } catch {
     return null;
