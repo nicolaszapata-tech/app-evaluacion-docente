@@ -35,6 +35,15 @@ const CORREOS_PERMITIDOS = new Set([
   'julian.garcia@lanuevaamerica.edu.co',
   'andres.valero@kuepa.edu.co',
   'andres.valero@lanuevaamerica.edu.co',
+  'brandon.olano@kuepa.com',
+  'brandon.olano@kuepa.edu.co',
+  'brandon.olano@lanuevaamerica.edu.co',
+  'juana.paris@kuepa.com',
+  'juana.paris@kuepa.edu.co',
+  'juana.paris@lanuevaamerica.edu.co',
+  'lorena.guerrero@kuepa.com',
+  'lorena.guerrero@kuepa.edu.co',
+  'lorena.guerrero@lanuevaamerica.edu.co',
 ]);
 
 const COOKIE = 'ed_sesion';
