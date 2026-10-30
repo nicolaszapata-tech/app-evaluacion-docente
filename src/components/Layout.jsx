@@ -1,7 +1,7 @@
 export default function Layout({ children, sesion, onCerrarSesion }) {
   return (
     <div className="min-h-screen bg-ink-950 text-slate-100">
-      <header className="border-b border-ink-700 bg-ink-900/80 backdrop-blur sticky top-0 z-10">
+      <header className="border-b border-ink-700 bg-ink-900/80 backdrop-blur sticky top-0 z-40">
         <div className="max-w-[1800px] mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-md bg-accent-500 flex items-center justify-center text-sm font-semibold text-white">

@@ -450,8 +450,8 @@ const COLDEF_GRUPOS = {
 };
 
 const GRUPOS_COL_DEF = [
-  { id: 'ident', label: 'Identificación', color: '#94a3b8', cols: ['id_grupo_mapeo', 'group_id', 'materia', 'mes_calificacion'] },
-  { id: 'acad', label: 'Detalle académico', color: '#a78bfa', cols: ['horario', 'fecha_calendario_inicio', 'fecha_calendario_fin', 'section_id'] },
+  { id: 'ident', label: 'Identificación', color: '#94a3b8', cols: ['id_grupo_mapeo', 'materia', 'mes_calificacion'] },
+  { id: 'acad', label: 'Detalle académico', color: '#a78bfa', cols: ['horario', 'fecha_calendario_inicio', 'fecha_calendario_fin', 'group_id', 'section_id'] },
   { id: 'docente', label: 'Docente', color: '#38bdf8', cols: ['tutor_calendario'] },
   { id: 'cupos', label: 'Seguimiento', color: '#34d399', cols: ['cupos_activos', 'cantidad_estudiantes_listas', 'asistentes_min_1_sesion'] },
   // 2026-10-15, a pedido del usuario: las respuestas + estado + gestión van
@@ -1612,7 +1612,7 @@ function TooltipDocente({ nombre, dir }) {
  */
 function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dirIdx, alertasPorGrupo, onAbrirGestion }) {
   const scrollRef = useRef(null);
-  useAnchoColumnaId(scrollRef, [gruposCol]);
+  usePinGroupId(scrollRef, [gruposCol, combos]);
   const totalCols = GRUPOS_COL_DEF.reduce((a, g) => a + (gruposCol.has(g.id) ? g.cols.length : 1), 0);
   return (
     <section className="rounded-2xl overflow-hidden border" style={{ borderColor: COMB_COLOR_ED + '66' }}>
@@ -1623,7 +1623,7 @@ function SeccionCombinadosEvalDocente({ combos, gruposCol, onToggleGrupoCol, dir
         </span>
         <span className="text-[11px] text-slate-500 ml-2">Se combinan desde la app de Asistencia y Aprobación. Se cuentan como una unidad (1 materia).</span>
       </div>
-      <div ref={scrollRef} className={CLASE_SCROLL_TABLA}>
+      <div ref={scrollRef} className="overflow-x-auto bg-ink-900">
         <table className="w-full text-xs border-collapse whitespace-nowrap">
           <TheadGruposCategoria gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
           {combos.map((c) => (
@@ -1728,7 +1728,7 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
                   key={key}
                   data-col={key}
                   rowSpan={perMiembro ? undefined : n}
-                  className={'px-3 py-2 ' + (key === 'id_grupo_mapeo' ? CLASE_TD_ID : key === 'group_id' ? CLASE_TD_GROUP_ID : '') + (['respuestas', 'respuestas_brutas', 'respuestas_erradas'].includes(key) ? 'align-middle ' : 'align-top ') + (def.center ? 'text-center ' : '') + (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ')}
+                  className={'px-3 py-2 ' + (key === 'id_grupo_mapeo' ? 'sticky left-0 z-10 bg-ink-900 group-hover:bg-ink-850 shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)] ' : '') + (['respuestas', 'respuestas_brutas', 'respuestas_erradas'].includes(key) ? 'align-middle ' : 'align-top ') + (def.center ? 'text-center ' : '') + (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ')}
                   style={style}
                 >
                   {contenido}
@@ -1753,7 +1753,7 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
   const [fMateria, setFMateria] = useState('');
   const [fTutor, setFTutor] = useState('');
   const scrollRef = useRef(null);
-  useAnchoColumnaId(scrollRef, [gruposCol, abierta]);
+  usePinGroupId(scrollRef, [gruposCol, abierta, grupos, fMateria, fTutor]);
 
   const gruposFiltrados = useMemo(
     () => grupos.filter((g) => coincideBusquedaGrupos_(g.materia, fMateria) && coincideBusquedaGrupos_(g.tutor_calendario, fTutor)),
@@ -1820,7 +1820,7 @@ function TablaCategoriaGrupos({ categoria, grupos, abierta, onToggle, gruposCol,
             )}
           </div>
 
-          <div ref={scrollRef} className={CLASE_SCROLL_TABLA}>
+          <div ref={scrollRef} className="overflow-x-auto bg-ink-900">
             <table className="w-full text-xs border-collapse whitespace-nowrap">
               <TheadGruposCategoria gruposCol={gruposCol} onToggleGrupoCol={onToggleGrupoCol} />
               <tbody>
@@ -1882,33 +1882,68 @@ function FiltroTextoGrupos({ label, valor, onChange, color }) {
   );
 }
 
-/* Columnas fijas (2026-10-30, a pedido del usuario: se salían de la pantalla
- * al bajar o subir). "ID Grupo (Mapeo)" y "Group ID" van juntas y siempre fijas
- * en todas las tablas, con sticky de CSS: las filas nuevas quedan fijas solas y
- * no hay que recalcular nada al hacer scroll. Solo se mide el ancho de la
- * primera columna, para saber dónde pegar la segunda. */
-const CLASE_TD_ID = 'sticky left-0 z-10 bg-ink-900 group-hover:bg-ink-850 ';
-const CLASE_TD_GROUP_ID = 'sticky left-[var(--ancho-id,0px)] z-10 bg-ink-900 group-hover:bg-ink-850 shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)] ';
-const CLASE_TH_ID = 'sticky left-0 z-20 bg-ink-850 ';
-const CLASE_TH_GROUP_ID = 'sticky left-[var(--ancho-id,0px)] z-20 bg-ink-850 shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)] ';
-/** Alto máximo de cada tabla: mantiene a la vista su encabezado y su barra horizontal. */
-const CLASE_SCROLL_TABLA = 'overflow-auto max-h-[70vh] bg-ink-900';
+/* Columnas fijas al desplazar la tabla hacia el lado (2026-10-15, igual que
+ * en la app de Asistencia): "ID Grupo (Mapeo)" queda SIEMPRE pegada a la
+ * izquierda (sticky left-0), y "Group ID" se pega a su derecha SOLO cuando
+ * el scroll horizontal la alcanzaría -- fuera de ese punto es una columna
+ * normal. Se manipula el DOM directo (sin useState) para no re-renderizar
+ * todas las filas en cada pixel de scroll. */
+const PIN_TH_CLASSES = ['sticky', 'z-20', 'bg-ink-850', 'shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)]'];
+const PIN_TD_CLASSES = ['sticky', 'z-10', 'bg-ink-900', 'group-hover:bg-ink-850', 'shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)]'];
 
-function useAnchoColumnaId(scrollRef, deps) {
+function usePinGroupId(scrollRef, deps) {
   useEffect(() => {
     const cont = scrollRef.current;
-    const th = cont?.querySelector('thead [data-col="id_grupo_mapeo"]');
-    if (!th) return undefined;
-    const obs = new ResizeObserver(() => cont.style.setProperty('--ancho-id', th.getBoundingClientRect().width + 'px'));
-    obs.observe(th);
-    return () => obs.disconnect();
+    if (!cont) return undefined;
+    function actualizar() {
+      const anclaTh = cont.querySelector('thead [data-col="id_grupo_mapeo"]');
+      const groupIdTh = cont.querySelector('thead [data-col="group_id"]');
+      const celdas = cont.querySelectorAll('[data-col="group_id"]');
+      if (!anclaTh || !groupIdTh) {
+        celdas.forEach((el) => { el.classList.remove(...PIN_TH_CLASSES, ...PIN_TD_CLASSES); el.style.left = ''; });
+        return;
+      }
+      const anchoAncla = anclaTh.getBoundingClientRect().width;
+      let offsetNatural = 0;
+      for (const celda of groupIdTh.parentElement.children) {
+        if (celda === groupIdTh) break;
+        offsetNatural += celda.getBoundingClientRect().width;
+      }
+      const debeFijarse = cont.scrollLeft + anchoAncla > offsetNatural;
+      celdas.forEach((el) => {
+        const esTh = el.tagName === 'TH';
+        const clases = esTh ? PIN_TH_CLASSES : PIN_TD_CLASSES;
+        const otras = esTh ? PIN_TD_CLASSES : PIN_TH_CLASSES;
+        if (debeFijarse) {
+          el.classList.remove(...otras);
+          el.classList.add(...clases);
+          el.style.left = anchoAncla + 'px';
+        } else {
+          el.classList.remove(...clases, ...otras);
+          el.style.left = '';
+        }
+      });
+    }
+    let pendiente = false;
+    function onScroll() {
+      if (pendiente) return;
+      pendiente = true;
+      requestAnimationFrame(() => { actualizar(); pendiente = false; });
+    }
+    actualizar();
+    cont.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', actualizar);
+    return () => {
+      cont.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', actualizar);
+    };
     // eslint-disable-next-line
   }, deps);
 }
 
 function TheadGruposCategoria({ gruposCol, onToggleGrupoCol }) {
   return (
-    <thead className="sticky top-0 z-30 bg-ink-850">
+    <thead>
       {/* Fila 1 — headers de los acordeones de columnas, cada uno con su color */}
       <tr>
         {GRUPOS_COL_DEF.map((g) => {
@@ -1953,7 +1988,7 @@ function TheadGruposCategoria({ gruposCol, onToggleGrupoCol }) {
                   'px-3 py-2 font-semibold text-[11px] uppercase tracking-wider text-slate-400 whitespace-nowrap border-b border-ink-700 ' +
                   (def.center ? 'text-center ' : 'text-left ') +
                   (def.wide ? 'min-w-[190px] ' : '') +
-                  (key === 'id_grupo_mapeo' ? CLASE_TH_ID : key === 'group_id' ? CLASE_TH_GROUP_ID : '')
+                  (key === 'id_grupo_mapeo' ? 'sticky left-0 z-20 bg-ink-850 shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)] ' : '')
                 }
                 style={j === 0 ? { borderLeft: `2px solid ${g.color}66` } : undefined}
                 title={def.tip}
@@ -2581,7 +2616,7 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPor
               title={key === 'respuestas_brutas' ? COLDEF_GRUPOS[key].tip : undefined}
               className={
                 'px-3 py-2 ' +
-                (key === 'id_grupo_mapeo' ? CLASE_TD_ID : key === 'group_id' ? CLASE_TD_GROUP_ID : '') +
+                (key === 'id_grupo_mapeo' ? 'sticky left-0 z-10 bg-ink-900 group-hover:bg-ink-850 shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)] ' : '') +
                 (def.center ? 'text-center ' : '') +
                 (def.mono ? 'font-mono text-[11px] text-slate-400 ' : 'text-slate-300 ') +
                 ''
