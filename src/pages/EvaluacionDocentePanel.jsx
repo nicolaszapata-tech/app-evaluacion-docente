@@ -443,7 +443,7 @@ const COLDEF_GRUPOS = {
   cantidad_estudiantes_listas: { t: 'Cant. est. listas', center: true },
   asistentes_min_1_sesion: { t: 'Asist. ≥1', center: true },
   respuestas_brutas: { t: 'Resp. brutas', center: true, punto: '#cbd5e1', tip: 'Todas las respuestas de esta materia con este profesor, incluidas las erradas. Resp. del grupo = brutas − erradas.' },
-  respuestas: { t: 'Resp. del grupo', center: true, punto: '#34d399', tip: 'Respuestas de esta materia con el tutor de este grupo. Es el número que cuenta para el grupo.' },
+  respuestas: { t: 'Resp. del grupo', center: true, punto: '#34d399', tip: 'Respuestas de esta materia con el tutor de este grupo. El porcentaje se calcula sobre Asist. ≥1 y la meta es 75%. Verde: 75% o más. Amarillo: de 50% a menos de 75%. Rojo: menos de 50%. Gris: sin dato de asistencia.' },
   respuestas_erradas: { t: 'Resp. erradas', center: true, punto: '#fbbf24', tip: 'Respuestas que no cuentan para ningún grupo: (1) eligieron esta materia con un docente que no la dicta, o (2) eligieron a este tutor con una materia que no dicta este mes. Clic en el número para ver el detalle y corregirlas.' },
   estado_materia: { t: 'Estado', center: true },
   alerta_cierre: { t: 'Gestión', center: true },
@@ -587,18 +587,50 @@ function celdaGrupo_(f, key) {
  *  toda la materia. ISO UTC, comparable con `creado_en`. */
 const FECHA_CONTEO_POR_TUTOR = '2026-10-15T16:47:00';
 
-/** Número de "Resp. brutas" (neutro, blanco) o "Resp. del grupo" (verde si
- *  hay, rojo suave si es 0 -- ese grupo no tiene ninguna respuesta propia),
- *  con el mismo ancho que la pastilla de erradas para que las tres columnas
- *  se lean alineadas. */
-function PildoraRespuestas({ tipo, valor }) {
+/** Semáforo de "Resp. del grupo" (2026-10-30, a pedido del usuario): cada
+ *  profesor debe asegurar que responda al menos el 75% de los estudiantes que
+ *  asistieron a una clase o más (Asist. ≥1). */
+const META_RESPUESTA_ASISTENTES = 0.75;
+const MINIMO_RESPUESTA_ASISTENTES = 0.5;
+const SEMAFORO_RESPUESTAS = {
+  verde: 'text-emerald-300 bg-emerald-500/15 border-emerald-500/40',
+  amarillo: 'text-amber-300 bg-amber-500/15 border-amber-500/40',
+  rojo: 'text-rose-300 bg-rose-500/15 border-rose-500/40',
+  neutro: 'text-slate-300 bg-slate-500/10 border-slate-500/25',
+};
+
+/** Color, porcentaje y tooltip de una celda. Sin asistentes no hay contra qué
+ *  medir: gris y sin porcentaje. El % se trunca para que un 74,6% no se lea
+ *  como 75% en amarillo. */
+function semaforoRespuestas_(n, asistentes) {
+  const asis = Number(asistentes);
+  if (asistentes == null || asistentes === '' || !Number.isFinite(asis) || asis <= 0) {
+    return { color: 'neutro', pct: null, tip: 'Sin dato de Asist. ≥1 para calcular el porcentaje.' };
+  }
+  const cobertura = n / asis;
+  const pct = Math.floor(cobertura * 100);
+  const faltan = Math.max(0, Math.ceil(asis * META_RESPUESTA_ASISTENTES) - n);
+  return {
+    color: cobertura >= META_RESPUESTA_ASISTENTES ? 'verde' : cobertura >= MINIMO_RESPUESTA_ASISTENTES ? 'amarillo' : 'rojo',
+    pct,
+    tip: `${n} de ${asis} asistentes (${pct}%). ${faltan ? `${faltan === 1 ? 'Falta 1' : `Faltan ${faltan}`} para la meta de 75%.` : 'Cumple la meta de 75%.'}`,
+  };
+}
+
+/** Número de "Resp. brutas" (neutro, blanco) o "Resp. del grupo" (con su
+ *  semáforo sobre Asist. ≥1), con el mismo alto y ancho mínimo que la pastilla
+ *  de erradas para que las tres columnas se lean alineadas. */
+function PildoraRespuestas({ tipo, valor, asistentes }) {
   const n = valor || 0;
   if (tipo === 'respuestas_brutas') {
     return <span className="inline-block min-w-[2.25rem] rounded-md px-2 py-0.5 font-medium text-slate-200 bg-slate-500/10 border border-slate-500/25">{n}</span>;
   }
-  return n > 0
-    ? <span className="inline-block min-w-[2.25rem] rounded-md px-2 py-0.5 font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40">{n}</span>
-    : <span className="inline-block min-w-[2.25rem] rounded-md px-2 py-0.5 font-bold text-rose-300/90 bg-rose-500/10 border border-rose-500/30">0</span>;
+  const { color, pct, tip } = semaforoRespuestas_(n, asistentes);
+  return (
+    <span title={tip} className={'inline-block min-w-[2.25rem] whitespace-nowrap rounded-md px-2 py-0.5 font-bold border ' + SEMAFORO_RESPUESTAS[color]}>
+      {n}{pct != null && <span className="ml-1.5 font-medium opacity-90">· {pct}%</span>}
+    </span>
+  );
 }
 
 /** "Resp. erradas" del grupo (2026-10-15/16). Suma DOS tipos de error:
@@ -1450,8 +1482,15 @@ function totalesRespuestasCombo_(ms) {
   const erradasDocente = sumaDistinta(claveMat, 'respuestas_erradas_docente');
   const erradasMateria = sumaDistinta(claveDoc, 'respuestas_erradas_materia');
   const respuestas = sumaDistinta((m) => claveRespuestas_(m.categoria_programa, m.mes_calificacion, m.materia, m.tutor_calendario), 'respuestas');
+  // Los miembros que comparten lista son los mismos asistentes: una vez por lista.
+  const asistentesPorLista = new Map();
+  ms.forEach((m) => {
+    const k = m.listado_url || 'g:' + m.group_id;
+    if (!asistentesPorLista.has(k) && m.asistentes_min_1_sesion != null) asistentesPorLista.set(k, Number(m.asistentes_min_1_sesion) || 0);
+  });
   return {
     respuestas,
+    asistentes: asistentesPorLista.size ? Array.from(asistentesPorLista.values()).reduce((a, b) => a + b, 0) : null,
     respuestas_brutas: respuestas + erradasDocente + erradasMateria,
     respuestas_erradas_docente: erradasDocente,
     respuestas_erradas_materia: erradasMateria,
@@ -1674,7 +1713,7 @@ function FilasComboCombinadoED({ c, gruposCol, onToggleGrupoCol, totalCols, dirI
               } else if (key === 'respuestas' || key === 'respuestas_brutas') {
                 contenido = (
                   <span className="inline-flex flex-col items-center gap-0.5">
-                    <PildoraRespuestas tipo={key} valor={tot[key]} />
+                    <PildoraRespuestas tipo={key} valor={tot[key]} asistentes={tot.asistentes} />
                     {key === 'respuestas' && carrerasCombo.length > 1 && <span className="text-[10px] text-slate-500">suma {carrerasCombo.length} carreras</span>}
                   </span>
                 );
@@ -2570,12 +2609,11 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPor
         return g.cols.map((key, j) => {
           const def = COLDEF_GRUPOS[key];
           const style = j === 0 ? { borderLeft: `2px solid ${g.color}4D` } : {};
-          const esResp = key === 'respuestas';
           return (
             <td
               key={key}
               data-col={key}
-              title={esResp || key === 'respuestas_brutas' ? COLDEF_GRUPOS[key].tip : undefined}
+              title={key === 'respuestas_brutas' ? COLDEF_GRUPOS[key].tip : undefined}
               className={
                 'px-3 py-2 ' +
                 (key === 'id_grupo_mapeo' ? 'sticky left-0 z-10 bg-ink-900 group-hover:bg-ink-850 shadow-[4px_0_6px_-2px_rgba(0,0,0,0.5)] ' : '') +
@@ -2607,7 +2645,7 @@ function FilaGrupoCategoria({ f, gruposCol, onToggleGrupoCol, dirIdx, alertasPor
               ) : key === 'respuestas_erradas' ? (
                 <CeldaRespuestasErradas f={f} />
               ) : key === 'respuestas' || key === 'respuestas_brutas' ? (
-                <PildoraRespuestas tipo={key} valor={f[key]} />
+                <PildoraRespuestas tipo={key} valor={f[key]} asistentes={f.asistentes_min_1_sesion} />
               ) : (
                 celdaGrupo_(f, key)
               )}
