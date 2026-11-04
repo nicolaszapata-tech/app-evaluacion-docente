@@ -27,6 +27,10 @@ const CONSULTAS = {
   alertas: ['doc_alertas_cierre', 'select=id,group_id,id_grupo_mapeo,categoria_programa,mes_calificacion,materia,tutor_calendario,canal,tipo,destinatario,enviado_por,estado,detalle,respuestas_antes,creado_en&order=creado_en.desc'],
   estudiantes_activos: ['doc_estudiantes_activos', 'select=mes_calificacion,estudiantes_activos'],
   historico: ['doc_historico_enero_julio_2026', null], // columnas las manda el cliente, validadas abajo
+  // 2026-11-04: antes salía del flujo n8n (acción conteos_respuestas); cuando
+  // n8n se caía, la vista Grupos mostraba 0 respuestas en todos los grupos.
+  // Se agrupa abajo, aquí mismo, y solo sale el conteo (sin datos personales).
+  conteos_respuestas: ['doc_respuestas_consolidada', 'select=categoria_programa,mes_calificacion,materia,docente&order=id.asc'],
 };
 
 const COLUMNAS_HISTORICO = new Set([
@@ -55,6 +59,23 @@ async function leerTodo(tabla, query) {
     filas.push(...lote);
     if (lote.length < PAGINA || /limit=/.test(query)) return filas;
   }
+}
+
+/** Mismo cálculo que el nodo "Calcular Conteos Respuestas" de n8n: cuántas
+ *  respuestas hay por carrera + mes + materia + docente (recortados). */
+function contarRespuestas(filas) {
+  const conteo = new Map();
+  for (const r of filas) {
+    if (!r || !r.categoria_programa || !r.mes_calificacion) continue;
+    const materia = (r.materia || '').trim() || null;
+    const docente = (r.docente || '').trim() || null;
+    const clave = JSON.stringify([r.categoria_programa, r.mes_calificacion, materia, docente]);
+    conteo.set(clave, (conteo.get(clave) || 0) + 1);
+  }
+  return [...conteo].map(([clave, respuestas]) => {
+    const [categoria_programa, mes_calificacion, materia, docente] = JSON.parse(clave);
+    return { categoria_programa, mes_calificacion, materia, docente, respuestas };
+  });
 }
 
 export default async function handler(req, res) {
@@ -89,7 +110,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    res.status(200).json({ filas: await leerTodo(tabla, query) });
+    const filas = await leerTodo(tabla, query);
+    res.status(200).json({ filas: consulta === 'conteos_respuestas' ? contarRespuestas(filas) : filas });
   } catch (e) {
     res.status(502).json({ error: 'No se pudo leer de Supabase.', detalle: String(e.message || e) });
   }

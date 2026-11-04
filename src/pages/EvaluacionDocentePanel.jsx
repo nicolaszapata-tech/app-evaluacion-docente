@@ -512,6 +512,8 @@ function claveRespuestas_(categoria, mes, materia, tutor) {
 /** conteos (fetchConteosRespuestas, por categoria+mes+materia+docente) ->
  *  { claveRespuestas_: n }. Se suma porque dos materias con distinta
  *  tilde/espacios caen en la misma clave. */
+const AVISO_CONTEOS = "No se pudieron cargar las respuestas de la evaluación (el servidor no respondió). Los conteos pueden salir en 0 aunque sí haya respuestas: recarga la página en un momento.";
+
 function mapaDeConteos_(conteos) {
   const m = {};
   (conteos || []).forEach((c) => {
@@ -1051,6 +1053,7 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
   const [gestionGrupo, setGestionGrupo] = useState(null); // fila abierta en el modal de Gestión
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
+  const [avisoConteos, setAvisoConteos] = useState(null);
 
   const [mesesElegidos, setMesesElegidos] = useState(() => new Set(meses.filter((m) => activos[m])));
   const [gruposCol, setGruposCol] = useState(GRUPOS_COL_ABIERTOS_INICIAL);
@@ -1070,7 +1073,7 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
           fetchGruposEvaluacionDocente(),
           fetchGruposCombinadosEvalDocente().catch(() => []),
           fetchDirectorioTutores().catch(() => []),
-          fetchConteosRespuestas().catch(() => []),
+          fetchConteosRespuestas().catch(() => { setAvisoConteos(AVISO_CONTEOS); return []; }),
           fetchCantEstListasPorGrupo().catch(() => new Map()),
           fetchAlertasCierre().catch(() => []),
         ]);
@@ -1386,6 +1389,7 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       </div>
 
       {error && <div className="text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>}
+      {avisoConteos && <div className="text-sm text-amber-200 bg-amber-950/40 border border-amber-800 rounded-md px-3 py-2">{avisoConteos}</div>}
       {alertaMsg && (
         <div
           className={
@@ -2671,14 +2675,16 @@ function VistaAlertasCierre() {
   const [conteos, setConteos] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
+  const [avisoConteos, setAvisoConteos] = useState(null);
 
   async function cargar() {
     setCargando(true);
     setError(null);
+    setAvisoConteos(null);
     try {
       const [al, cr] = await Promise.all([
         fetchAlertasCierre(),
-        fetchConteosRespuestas().catch(() => []),
+        fetchConteosRespuestas().catch(() => { setAvisoConteos(AVISO_CONTEOS); return []; }),
       ]);
       setAlertas(al);
       setConteos(cr);
@@ -2715,6 +2721,7 @@ function VistaAlertasCierre() {
       </div>
 
       {error && <div className="text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>}
+      {avisoConteos && <div className="text-sm text-amber-200 bg-amber-950/40 border border-amber-800 rounded-md px-3 py-2">{avisoConteos}</div>}
       {cargando ? (
         <p className="text-xs text-slate-400">Cargando…</p>
       ) : alertas.length === 0 ? (

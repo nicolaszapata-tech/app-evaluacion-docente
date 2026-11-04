@@ -453,8 +453,15 @@ export async function corregirRespuesta({ respuestaId, groupId }) {
 }
 
 export async function fetchConteosRespuestas() {
-  const { conteos } = await llamarPanel_({ accion: 'conteos_respuestas' });
-  return conteos || [];
+  // 2026-11-04: primero directo de Supabase (/api/datos); n8n queda de
+  // respaldo. Si los dos fallan, lanza el error para que la vista avise en
+  // vez de mostrar 0 respuestas en todos los grupos.
+  try {
+    return await leerDatos_('conteos_respuestas');
+  } catch {
+    const { conteos } = await llamarPanel_({ accion: 'conteos_respuestas' });
+    return conteos || [];
+  }
 }
 
 /** Codebook del análisis cualitativo (2026-09-23, definido con el usuario a
