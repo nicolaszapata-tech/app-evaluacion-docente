@@ -452,6 +452,20 @@ export async function corregirRespuesta({ respuestaId, groupId }) {
   }
 }
 
+/** Comentarios con tema del profesor (DOCENTE_*), positivos/mixtos/negativos,
+ *  con su docente y mes -- 2026-11-04, ficha del docente > Comentarios. Se
+ *  guarda la promesa para no volver a pedirlos al pasar de un docente a otro. */
+let comentariosDocentePromesa_ = null;
+export function fetchComentariosDocente() {
+  if (!comentariosDocentePromesa_) {
+    comentariosDocentePromesa_ = leerDatos_('comentarios_docente').catch((e) => {
+      comentariosDocentePromesa_ = null;
+      throw e;
+    });
+  }
+  return comentariosDocentePromesa_;
+}
+
 export async function fetchConteosRespuestas() {
   // 2026-11-04: primero directo de Supabase (/api/datos); n8n queda de
   // respaldo. Si los dos fallan, lanza el error para que la vista avise en

@@ -31,6 +31,10 @@ const CONSULTAS = {
   // n8n se caía, la vista Grupos mostraba 0 respuestas en todos los grupos.
   // Se agrupa abajo, aquí mismo, y solo sale el conteo (sin datos personales).
   conteos_respuestas: ['doc_respuestas_consolidada', 'select=categoria_programa,mes_calificacion,materia,docente&order=id.asc'],
+  // 2026-11-04: comentarios del análisis cualitativo con algún tema del
+  // profesor (ficha del docente > Comentarios). Solo texto + docente/mes;
+  // sin correo ni cédula del estudiante.
+  comentarios_docente: ['doc_analisis_cualitativo', 'select=id,campo_origen,temas,sentimiento,texto,doc_respuestas_consolidada(mes_calificacion,categoria_programa,docente)&temas=ov.{DOCENTE_CLARIDAD,DOCENTE_DOMINIO,DOCENTE_TRATO,DOCENTE_DINAMISMO}&sentimiento=in.(positivo,mixto,negativo)&order=id.asc'],
 };
 
 const COLUMNAS_HISTORICO = new Set([
@@ -111,7 +115,15 @@ export default async function handler(req, res) {
 
   try {
     const filas = await leerTodo(tabla, query);
-    res.status(200).json({ filas: consulta === 'conteos_respuestas' ? contarRespuestas(filas) : filas });
+    let salida = filas;
+    if (consulta === 'conteos_respuestas') salida = contarRespuestas(filas);
+    if (consulta === 'comentarios_docente') {
+      salida = filas.map((f) => {
+        const r = f.doc_respuestas_consolidada || {};
+        return { campo_origen: f.campo_origen, temas: f.temas || [], sentimiento: f.sentimiento, texto: f.texto, mes_calificacion: r.mes_calificacion, categoria_programa: r.categoria_programa, docente: r.docente };
+      });
+    }
+    res.status(200).json({ filas: salida });
   } catch (e) {
     res.status(502).json({ error: 'No se pudo leer de Supabase.', detalle: String(e.message || e) });
   }

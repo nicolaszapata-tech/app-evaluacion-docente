@@ -35,6 +35,7 @@ import {
   fetchMesesDisponiblesPanel,
   fetchStatsYCrudo,
   fetchConteosRespuestas,
+  fetchComentariosDocente,
   fetchRespuestasErradasDetalle,
   corregirRespuesta,
   fetchUltimoSyncBaseGrupos,
@@ -6194,10 +6195,202 @@ function RadarDocente({ docente, promedioInstitucional, color }) {
   );
 }
 
+/** Ficha del docente > Comentarios (2026-11-04, a pedido del usuario): los
+ *  comentarios del análisis cualitativo con algún tema del PROFESOR (rama
+ *  'docente'), separados en Positivo / Mixto / Negativo, con la proporción del
+ *  docente al lado de la institucional (todos los docentes, mismo mes y mismo
+ *  tema) y descarga .txt por columna. Neutral queda fuera (pedido del usuario).
+ *  Se leen por /api/datos (sesión verificada); solo texto, sin datos del
+ *  estudiante. */
+const TEMAS_PROFESOR_ = TEMAS_CUALITATIVO.filter((t) => t.rama === 'docente');
+const SENTIMIENTOS_FICHA_ = ['positivo', 'mixto', 'negativo'].map((k) => SENTIMIENTOS_CUALITATIVO.find((x) => x.key === k));
+
+function proporciones_(filas) {
+  const n = { positivo: 0, mixto: 0, negativo: 0 };
+  filas.forEach((f) => { if (f.sentimiento in n) n[f.sentimiento] += 1; });
+  const total = filas.length;
+  const pct = {};
+  Object.keys(n).forEach((k) => { pct[k] = total ? (n[k] / total) * 100 : null; });
+  return { n, pct, total };
+}
+
+function BarraProporciones({ titulo, prop }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-[11px] mb-1">
+        <span className="text-slate-300 font-semibold">{titulo}</span>
+        <span className="text-slate-500">{prop.total} comentario{prop.total === 1 ? '' : 's'}</span>
+      </div>
+      <div className="flex h-3.5 rounded overflow-hidden bg-ink-800">
+        {prop.total > 0 && SENTIMIENTOS_FICHA_.map((s) => (
+          <div key={s.key} style={{ width: prop.pct[s.key] + '%', backgroundColor: s.color }} title={`${s.label}: ${prop.n[s.key]} (${Math.round(prop.pct[s.key])}%)`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ComentariosDocente({ docente, mesSeleccionado, color }) {
+  const [todas, setTodas] = useState(null);
+  const [error, setError] = useState(null);
+  const [tema, setTema] = useState('todos');
+
+  useEffect(() => {
+    let vivo = true;
+    fetchComentariosDocente()
+      .then((filas) => { if (vivo) setTodas(filas); })
+      .catch((e) => { if (vivo) setError(e.message || String(e)); });
+    return () => { vivo = false; };
+  }, []);
+
+  const { delDocente, institucional } = useMemo(() => {
+    const filas = (todas || []).filter((f) =>
+      (mesSeleccionado === 'TODOS' || f.mes_calificacion === mesSeleccionado) &&
+      (tema === 'todos' || (f.temas || []).includes(tema)));
+    const dn = normalizar(docente.nombre);
+    return { delDocente: filas.filter((f) => normalizar((f.docente || '').trim()) === dn), institucional: filas };
+  }, [todas, mesSeleccionado, tema, docente.nombre]);
+
+  if (error) return <p className="text-sm text-red-300 py-4">No se pudieron cargar los comentarios: {error}</p>;
+  if (!todas) return <p className="text-sm text-slate-400 py-6 text-center">Cargando comentarios…</p>;
+
+  const propDoc = proporciones_(delDocente);
+  const propInst = proporciones_(institucional);
+  const campoMeta = Object.fromEntries(CAMPOS_CUALITATIVO.map((c) => [c.key, c.label]));
+  const temaMeta = tema === 'todos' ? null : TEMAS_PROFESOR_.find((t) => t.key === tema);
+  const etiquetaPeriodo = mesSeleccionado === 'TODOS' ? 'todos los meses' : mesSeleccionado;
+  // meses que ya pasaron por el análisis cualitativo (el más reciente suele ir atrasado)
+  const mesesAnalizados = Array.from(new Set(todas.map((f) => f.mes_calificacion).filter(Boolean))).sort((a, b) => MESES_ES.indexOf(a) - MESES_ES.indexOf(b));
+  const mesSinAnalisis = mesSeleccionado !== 'TODOS' && !mesesAnalizados.includes(mesSeleccionado);
+  const porSent = {};
+  SENTIMIENTOS_FICHA_.forEach((s) => { porSent[s.key] = delDocente.filter((f) => f.sentimiento === s.key); });
+
+  const descargar = (s, lista) => {
+    const encabezado = `${docente.nombre} — ${temaMeta ? temaMeta.label : 'Temas del profesor'} — ${s.label} — ${etiquetaPeriodo} (${lista.length} comentario${lista.length === 1 ? '' : 's'})`;
+    const p = propDoc.pct[s.key], pi = propInst.pct[s.key];
+    const resumen = `${s.label}: ${p == null ? '—' : Math.round(p) + '%'} de los comentarios de este docente; institucional: ${pi == null ? '—' : Math.round(pi) + '%'}.`;
+    const cuerpo = lista.map((f, i) => {
+      const temas = (f.temas || []).map((k) => TEMAS_PROFESOR_.find((t) => t.key === k)?.label).filter(Boolean).join(', ');
+      const meta = [campoMeta[f.campo_origen] || f.campo_origen, f.mes_calificacion, f.categoria_programa, temas].filter(Boolean).join(' · ');
+      return `${i + 1}. [${meta}]\n${f.texto}\n`;
+    }).join('\n');
+    const archivo = `${normalizar(docente.nombre).replace(/[^a-z0-9]+/g, '_')}_${tema === 'todos' ? 'profesor' : tema.toLowerCase()}_${s.key}.txt`;
+    descargarTxt_(archivo, `${encabezado}\n${'='.repeat(encabezado.length)}\n${resumen}\n\n${cuerpo}`);
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-400">
+        Comentarios del análisis cualitativo que hablan del profesor ({TEMAS_PROFESOR_.map((t) => t.label).join(', ')}), en {etiquetaPeriodo}. Sin datos del estudiante. Los neutrales no se muestran.
+        <span className="block text-slate-500 mt-0.5">Meses con análisis cualitativo: {mesesAnalizados.join(', ') || 'ninguno'}. Un mes nuevo aparece cuando se corre su análisis.</span>
+      </p>
+      {mesSinAnalisis && (
+        <div className="text-sm text-amber-200 bg-amber-950/40 border border-amber-800 rounded-md px-3 py-2">{mesSeleccionado} todavía no tiene análisis cualitativo, por eso no aparecen comentarios de ese mes.</div>
+      )}
+
+      <div className="flex flex-wrap gap-1.5">
+        {[{ key: 'todos', label: 'Todos los temas del profesor' }, ...TEMAS_PROFESOR_].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTema(t.key)}
+            className={'text-[11px] px-2.5 py-1 rounded-full border transition-colors ' + (tema === t.key ? 'text-white' : 'border-ink-600 text-slate-400 hover:text-slate-200')}
+            style={tema === t.key ? { borderColor: color, backgroundColor: color + '33' } : undefined}
+            title={t.descripcion || undefined}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {temaMeta && <p className="text-[11px] text-slate-500 -mt-2">{temaMeta.descripcion}</p>}
+
+      <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3 space-y-3">
+        <BarraProporciones titulo={docente.nombre} prop={propDoc} />
+        <BarraProporciones titulo="Institucional (todos los docentes)" prop={propInst} />
+        <table className="text-xs w-full">
+          <thead>
+            <tr className="text-slate-500">
+              <th className="text-left font-medium py-1">Tipo</th>
+              <th className="text-right font-medium py-1">Este docente</th>
+              <th className="text-right font-medium py-1">Institucional</th>
+              <th className="text-right font-medium py-1">Diferencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            {SENTIMIENTOS_FICHA_.map((s) => {
+              const p = propDoc.pct[s.key], pi = propInst.pct[s.key];
+              const dif = p != null && pi != null ? Math.round(p) - Math.round(pi) : null;
+              const bueno = dif == null ? null : (s.key === 'positivo' ? dif >= 0 : dif <= 0);
+              return (
+                <tr key={s.key} className="border-t border-ink-800">
+                  <td className="py-1"><span className="inline-flex items-center gap-1.5 font-semibold" style={{ color: s.color }}><span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: s.color }} />{s.label}</span></td>
+                  <td className="py-1 text-right text-slate-200">{p == null ? '—' : `${Math.round(p)}% (${propDoc.n[s.key]})`}</td>
+                  <td className="py-1 text-right text-slate-400">{pi == null ? '—' : `${Math.round(pi)}% (${propInst.n[s.key]})`}</td>
+                  <td className={'py-1 text-right font-semibold ' + (dif == null || dif === 0 ? 'text-slate-500' : bueno ? 'text-emerald-400' : 'text-rose-400')}>
+                    {dif == null ? '—' : dif === 0 ? 'igual' : `${dif > 0 ? '+' : '−'}${Math.abs(dif)} ${Math.abs(dif) === 1 ? 'pt' : 'pts'}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {propDoc.total > 0 && propDoc.total < 5 && (
+          <p className="text-[11px] text-amber-300">Muestra pequeña: con {propDoc.total} comentario{propDoc.total === 1 ? '' : 's'} un solo comentario mueve mucho el porcentaje.</p>
+        )}
+      </div>
+
+      {propDoc.total === 0 ? (
+        <p className="text-sm text-slate-500 py-4 text-center">Este docente no tiene comentarios sobre el profesor en {etiquetaPeriodo}{temaMeta ? ' con este tema' : ''}.</p>
+      ) : (
+        <div className="grid md:grid-cols-3 gap-3">
+          {SENTIMIENTOS_FICHA_.map((s) => {
+            const lista = porSent[s.key];
+            return (
+              <div key={s.key} className="rounded-md border bg-ink-900/60 flex flex-col" style={{ borderColor: s.color + '40' }}>
+                <div className="px-3 py-1.5 border-b" style={{ borderColor: s.color + '30', backgroundColor: s.color + '14' }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: s.color }}>{s.label}</span>
+                    <span className="text-[11px] text-slate-400">{lista.length}{propDoc.pct[s.key] != null ? ` · ${Math.round(propDoc.pct[s.key])}%` : ''}</span>
+                  </div>
+                  {lista.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => descargar(s, lista)}
+                      title={`Descargar los ${lista.length} comentarios "${s.label}" de este docente en un archivo de texto`}
+                      className="mt-1.5 w-full flex items-center justify-center gap-1.5 text-[10.5px] font-semibold px-2 py-1 rounded border border-slate-600 text-slate-300 hover:text-white hover:border-slate-400 hover:bg-ink-800 transition-colors"
+                    >
+                      ⬇ Descargar .txt
+                    </button>
+                  )}
+                </div>
+                <div className="p-2 space-y-2 max-h-80 overflow-y-auto">
+                  {lista.length === 0 ? (
+                    <p className="text-[11px] text-slate-600 italic px-1 py-2">Sin comentarios.</p>
+                  ) : lista.map((c, i) => (
+                    <div key={i} className="bg-ink-800/70 rounded px-2 py-1.5">
+                      <div className="text-[9.5px] text-slate-500 mb-0.5">
+                        {campoMeta[c.campo_origen] || c.campo_origen}
+                        {c.mes_calificacion && <span> · {c.mes_calificacion}</span>}
+                        {c.categoria_programa && <span> · {c.categoria_programa}</span>}
+                      </div>
+                      <p className="text-[11px] text-slate-200 leading-snug">"{c.texto}"</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const TABS_FICHA = [
   { key: 'perfil', label: 'Perfil' },
   { key: 'materias', label: 'Materias' },
   { key: 'distribucion', label: 'Distribución' },
+  { key: 'comentarios', label: 'Comentarios' },
 ];
 
 function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccionado, onClose, onAnterior, onSiguiente, posicion }) {
@@ -6396,11 +6589,13 @@ function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccion
           <PlotlyChart data={dataDistribucion} layout={layoutDistribucion} style={{ width: '100%', height: 240 }} />
           <p className="text-[11px] text-slate-500 mt-2">
             {docente.comentarios.conteo > 0
-              ? `${docente.comentarios.conteo} de ${docente.totalRespuestas} respuesta(s) incluyeron un comentario. El contenido no se muestra acá todavía: queda pendiente para una fase futura, con acceso restringido.`
+              ? `${docente.comentarios.conteo} de ${docente.totalRespuestas} respuesta(s) incluyeron un comentario. Para leerlos, abre la pestaña Comentarios.`
               : 'Sin comentarios registrados todavía.'}
           </p>
         </div>
       ))}
+
+      {tab === 'comentarios' && <ComentariosDocente docente={docente} mesSeleccionado={mesSeleccionado} color={color} />}
     </ModalRanking>
   );
 }
