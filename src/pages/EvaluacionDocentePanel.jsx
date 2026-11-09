@@ -6341,10 +6341,10 @@ function ComentariosDocente({ docente, mesSeleccionado, color }) {
       {/* 1. De dónde salen los números */}
       <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3">
         <p className="text-xs font-semibold text-slate-200 mb-1">¿Por qué no se ven todos los comentarios? ({etiquetaPeriodo})</p>
-        <p className="text-[11px] text-slate-500 mb-2.5">Aquí solo se muestran los comentarios que dicen algo concreto del profesor: cómo explica, cuánto domina el tema, cómo trata a los estudiantes y qué tan dinámicas son sus clases.</p>
+        <p className="text-[11px] text-slate-500 mb-2.5">Aquí se muestran los comentarios que hablan del profesor: cómo explica, cuánto domina el tema, cómo trata a los estudiantes, qué tan dinámicas son sus clases, y también elogios directos como "excelente docente" o "buen profe".</p>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <PasoDesglose valor={desglose.escritos} texto="estudiantes escribieron algo en la pregunta sobre el docente" />
-          <PasoDesglose valor={desglose.genericos} texto={'eran genéricos, no dicen qué hace bien o mal ("excelente docente", "buen profe", "N/A", "ninguno"); no se muestran'} />
+          <PasoDesglose valor={desglose.genericos} texto={'eran genéricos, sin mencionar al profesor ("excelente", "todo bien", "N/A", "ninguno"); no se muestran'} />
           <PasoDesglose valor={desglose.otros} texto="hablaban de otra cosa (plataforma, contenidos, horarios…) o no opinaban; no se muestran" />
           {desglose.pendientes > 0
             ? <PasoDesglose valor={desglose.pendientes} tono="aviso" texto="todavía no se han analizado; aparecerán cuando se clasifiquen" />
@@ -6567,7 +6567,7 @@ function FichaDocenteModal({ docente, color, promedioInstitucional, mesSeleccion
         <KpiRanking
           etiqueta="Comentarios escritos"
           valor={docente.comentarios.conteo}
-          detalle={docente.comentarios.conteo ? 'en la pregunta del docente (incluye "N/A", "excelente docente"…)' : 'sin comentarios'}
+          detalle={docente.comentarios.conteo ? 'en la pregunta del docente (incluye "N/A", "todo bien"…)' : 'sin comentarios'}
           onClick={docente.comentarios.conteo ? () => setTab('comentarios') : undefined}
         />
       </div>
