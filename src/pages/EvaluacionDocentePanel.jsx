@@ -6196,71 +6196,22 @@ function RadarDocente({ docente, promedioInstitucional, color }) {
 }
 
 /** Ficha del docente > Comentarios (2026-11-04, a pedido del usuario): los
- *  comentarios del análisis cualitativo con algún tema del PROFESOR (rama
- *  'docente'), separados en Positivo / Mixto / Negativo, comparados con el
- *  promedio de todos los docentes (mismo mes y mismo tema) y descarga .txt por
- *  columna. Neutral queda fuera (pedido del usuario).
- *  2026-11-09: el usuario no entendía por qué el número de comentarios
- *  escritos (KPI de arriba) no cuadraba con los mostrados; ahora arriba va el
- *  desglose "de dónde salen" y la comparación se lee en frases, sin "pts".
+ *  comentarios del análisis cualitativo que hablan del PROFESOR (temas de la
+ *  rama 'docente'), separados en Positivo / Mixto / Negativo, con descarga
+ *  .txt por columna. Neutral queda fuera (pedido del usuario).
+ *  2026-11-09 (v3, a pedido del usuario: "no se entiende la separación, los
+ *  temas y las áreas"): sin comparación institucional, sin filtro de temas y
+ *  sin carrera en cada comentario. Arriba un resumen de 3 números; el
+ *  desglose de por qué no aparecen todos los escritos queda plegado.
  *  Se leen por /api/datos (sesión verificada); solo texto, sin datos del
  *  estudiante. */
-const TEMAS_PROFESOR_ = TEMAS_CUALITATIVO.filter((t) => t.rama === 'docente');
 const SENTIMIENTOS_FICHA_ = ['positivo', 'mixto', 'negativo'].map((k) => SENTIMIENTOS_CUALITATIVO.find((x) => x.key === k));
-const PLURAL_SENT_ = { positivo: 'positivos', mixto: 'mixtos', negativo: 'negativos' };
-const AYUDA_SENT_ = { positivo: 'habla bien del profesor', mixto: 'reconoce algo bueno pero también critica algo', negativo: 'critica o pide mejorar algo del profesor' };
+const PLURAL_SENT_ = { positivo: 'Positivos', mixto: 'Mixtos', negativo: 'Negativos' };
+const AYUDA_SENT_ = { positivo: 'hablan bien del profesor', mixto: 'reconocen algo bueno pero también critican algo', negativo: 'critican o piden mejorar algo del profesor' };
 
-function proporciones_(filas) {
-  const n = { positivo: 0, mixto: 0, negativo: 0 };
-  filas.forEach((f) => { if (f.sentimiento in n) n[f.sentimiento] += 1; });
-  const total = filas.length;
-  const pct = {};
-  Object.keys(n).forEach((k) => { pct[k] = total ? Math.round((n[k] / total) * 100) : null; });
-  return { n, pct, total };
-}
-
-function BarraProporciones({ titulo, prop }) {
-  return (
-    <div>
-      <div className="flex items-baseline justify-between text-[11px] mb-1">
-        <span className="text-slate-300 font-semibold">{titulo}</span>
-        <span className="text-slate-500">{prop.total} comentario{prop.total === 1 ? '' : 's'}</span>
-      </div>
-      <div className="flex h-5 rounded overflow-hidden bg-ink-800">
-        {prop.total > 0 && SENTIMIENTOS_FICHA_.map((s) => prop.n[s.key] > 0 && (
-          <div
-            key={s.key}
-            className="flex items-center justify-center text-[10px] font-bold text-ink-950 overflow-hidden"
-            style={{ width: (prop.n[s.key] / prop.total) * 100 + '%', backgroundColor: s.color }}
-            title={`${s.label}: ${prop.n[s.key]} de ${prop.total} (${prop.pct[s.key]}%)`}
-          >
-            {prop.pct[s.key] >= 8 ? prop.pct[s.key] + '%' : ''}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Una cajita del desglose "de dónde salen los números". */
-function PasoDesglose({ valor, texto, tono = 'gris' }) {
-  const estilos = {
-    gris: 'border-ink-700 text-slate-400',
-    fuerte: 'border-emerald-700/70 text-emerald-200 bg-emerald-950/30',
-    aviso: 'border-amber-800/70 text-amber-200 bg-amber-950/20',
-  };
-  return (
-    <div className={'rounded-md border px-2.5 py-1.5 ' + estilos[tono]}>
-      <div className="text-base font-bold leading-none">{valor}</div>
-      <div className="text-[10.5px] leading-snug mt-1">{texto}</div>
-    </div>
-  );
-}
-
-function ComentariosDocente({ docente, mesSeleccionado, color }) {
+function ComentariosDocente({ docente, mesSeleccionado }) {
   const [todas, setTodas] = useState(null);
   const [error, setError] = useState(null);
-  const [tema, setTema] = useState('todos');
 
   useEffect(() => {
     let vivo = true;
@@ -6272,11 +6223,11 @@ function ComentariosDocente({ docente, mesSeleccionado, color }) {
 
   const datos = useMemo(() => {
     const dn = normalizar(docente.nombre);
-    const delPeriodo = (todas || []).filter((f) => mesSeleccionado === 'TODOS' || f.mes_calificacion === mesSeleccionado);
-    const sobreProfesor = delPeriodo.filter((f) => f.tipo === 'profesor' && (tema === 'todos' || (f.temas || []).includes(tema)));
-    const esDelDocente = (f) => normalizar((f.docente || '').trim()) === dn;
-    // desglose de la pregunta del docente (sin filtro de tema)
-    const preguntaDocente = delPeriodo.filter((f) => f.campo_origen === 'docente' && esDelDocente(f));
+    const delDocente = (todas || []).filter((f) =>
+      (mesSeleccionado === 'TODOS' || f.mes_calificacion === mesSeleccionado) &&
+      normalizar((f.docente || '').trim()) === dn);
+    const sobreProfesor = delDocente.filter((f) => f.tipo === 'profesor');
+    const preguntaDocente = delDocente.filter((f) => f.campo_origen === 'docente');
     const escritos = docente.comentarios.conteo;
     const desglose = {
       escritos,
@@ -6284,176 +6235,95 @@ function ComentariosDocente({ docente, mesSeleccionado, color }) {
       otros: preguntaDocente.filter((f) => f.tipo === 'otro').length,
       sobreProfesor: preguntaDocente.filter((f) => f.tipo === 'profesor').length,
       pendientes: Math.max(0, escritos - preguntaDocente.length),
-      deOtrasPreguntas: delPeriodo.filter((f) => f.tipo === 'profesor' && f.campo_origen !== 'docente' && esDelDocente(f)).length,
+      deOtrasPreguntas: sobreProfesor.filter((f) => f.campo_origen !== 'docente').length,
     };
-    return { delDocente: sobreProfesor.filter(esDelDocente), institucional: sobreProfesor, desglose };
-  }, [todas, mesSeleccionado, tema, docente.nombre, docente.comentarios.conteo]);
+    return { sobreProfesor, desglose };
+  }, [todas, mesSeleccionado, docente.nombre, docente.comentarios.conteo]);
 
   if (error) return <p className="text-sm text-red-300 py-4">No se pudieron cargar los comentarios: {error}</p>;
   if (!todas) return <p className="text-sm text-slate-400 py-6 text-center">Cargando comentarios…</p>;
 
-  const { delDocente, institucional, desglose } = datos;
-  const propDoc = proporciones_(delDocente);
-  const propInst = proporciones_(institucional);
-  const campoMeta = Object.fromEntries(CAMPOS_CUALITATIVO.map((c) => [c.key, c.label]));
-  const temaMeta = tema === 'todos' ? null : TEMAS_PROFESOR_.find((t) => t.key === tema);
+  const { sobreProfesor, desglose } = datos;
+  const total = sobreProfesor.length;
   const etiquetaPeriodo = mesSeleccionado === 'TODOS' ? 'todos los meses' : mesSeleccionado;
-  // meses que ya pasaron por el análisis cualitativo (el más reciente suele ir atrasado)
   const mesesAnalizados = Array.from(new Set(todas.map((f) => f.mes_calificacion).filter(Boolean))).sort((a, b) => MESES_ES.indexOf(a) - MESES_ES.indexOf(b));
   const mesSinAnalisis = mesSeleccionado !== 'TODOS' && !mesesAnalizados.includes(mesSeleccionado);
-  const totalMostrados = desglose.sobreProfesor + desglose.deOtrasPreguntas;
   const porSent = {};
-  SENTIMIENTOS_FICHA_.forEach((s) => { porSent[s.key] = delDocente.filter((f) => f.sentimiento === s.key); });
-
-  // veredicto en palabras: diferencias de menos de 5 puntos se leen como "similar"
-  const veredicto = (s) => {
-    const p = propDoc.pct[s.key], pi = propInst.pct[s.key];
-    if (p == null || pi == null) return null;
-    const dif = p - pi;
-    if (Math.abs(dif) < 5) return { texto: 'Similar al promedio', clase: 'text-slate-400 border-ink-600' };
-    const mas = dif > 0;
-    const bueno = s.key === 'positivo' ? mas : !mas;
-    const texto = s.key === 'positivo' ? (mas ? 'Mejor que el promedio' : 'Por debajo del promedio')
-      : s.key === 'negativo' ? (mas ? 'Más críticas que el promedio' : 'Menos críticas que el promedio')
-      : (mas ? 'Más mixtos que el promedio' : 'Menos mixtos que el promedio');
-    return { texto: `${texto} (${mas ? '+' : '−'}${Math.abs(dif)})`, clase: bueno ? 'text-emerald-300 border-emerald-800/70' : 'text-rose-300 border-rose-800/70' };
-  };
+  SENTIMIENTOS_FICHA_.forEach((s) => { porSent[s.key] = sobreProfesor.filter((f) => f.sentimiento === s.key); });
+  const pct = (n) => (total ? Math.round((n / total) * 100) : 0);
 
   const descargar = (s, lista) => {
-    const encabezado = `${docente.nombre} — ${temaMeta ? temaMeta.label : 'Comentarios sobre el profesor'} — ${s.label} — ${etiquetaPeriodo} (${lista.length} comentario${lista.length === 1 ? '' : 's'})`;
-    const p = propDoc.pct[s.key], pi = propInst.pct[s.key];
-    const resumen = `Son el ${p == null ? '—' : p + '%'} de los comentarios sobre este docente; en el promedio de todos los docentes son el ${pi == null ? '—' : pi + '%'}.`;
-    const cuerpo = lista.map((f, i) => {
-      const temas = (f.temas || []).map((k) => TEMAS_PROFESOR_.find((t) => t.key === k)?.label).filter(Boolean).join(', ');
-      const meta = ['Pregunta: ' + (campoMeta[f.campo_origen] || f.campo_origen), f.mes_calificacion, f.categoria_programa, temas].filter(Boolean).join(' · ');
-      return `${i + 1}. [${meta}]\n${f.texto}\n`;
-    }).join('\n');
-    const archivo = `${normalizar(docente.nombre).replace(/[^a-z0-9]+/g, '_')}_${tema === 'todos' ? 'profesor' : tema.toLowerCase()}_${s.key}.txt`;
-    descargarTxt_(archivo, `${encabezado}\n${'='.repeat(encabezado.length)}\n${resumen}\n\n${cuerpo}`);
+    const encabezado = `${docente.nombre} — Comentarios ${PLURAL_SENT_[s.key].toLowerCase()} — ${etiquetaPeriodo} (${lista.length} de ${total} comentarios sobre el profesor)`;
+    const cuerpo = lista.map((f, i) => `${i + 1}. [${f.mes_calificacion || ''}]\n${f.texto}\n`).join('\n');
+    const archivo = `${normalizar(docente.nombre).replace(/[^a-z0-9]+/g, '_')}_${s.key}.txt`;
+    descargarTxt_(archivo, `${encabezado}\n${'='.repeat(encabezado.length)}\n\n${cuerpo}`);
   };
 
   return (
     <div className="space-y-4">
       {mesSinAnalisis && (
-        <div className="text-sm text-amber-200 bg-amber-950/40 border border-amber-800 rounded-md px-3 py-2">{mesSeleccionado} todavía no tiene análisis de comentarios, por eso aquí no aparece nada de ese mes. Meses ya analizados: {mesesAnalizados.join(', ') || 'ninguno'}.</div>
+        <div className="text-sm text-amber-200 bg-amber-950/40 border border-amber-800 rounded-md px-3 py-2">Los comentarios de {mesSeleccionado} todavía no se han analizado. Meses disponibles: {mesesAnalizados.join(', ') || 'ninguno'}.</div>
       )}
 
-      {/* 1. De dónde salen los números */}
-      <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3">
-        <p className="text-xs font-semibold text-slate-200 mb-1">¿Por qué no se ven todos los comentarios? ({etiquetaPeriodo})</p>
-        <p className="text-[11px] text-slate-500 mb-2.5">Aquí se muestran los comentarios que hablan del profesor: cómo explica, cuánto domina el tema, cómo trata a los estudiantes, qué tan dinámicas son sus clases, y también elogios directos como "excelente docente" o "buen profe".</p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <PasoDesglose valor={desglose.escritos} texto="estudiantes escribieron algo en la pregunta sobre el docente" />
-          <PasoDesglose valor={desglose.genericos} texto={'eran genéricos, sin mencionar al profesor ("excelente", "todo bien", "N/A", "ninguno"); no se muestran'} />
-          <PasoDesglose valor={desglose.otros} texto="hablaban de otra cosa (plataforma, contenidos, horarios…) o no opinaban; no se muestran" />
-          {desglose.pendientes > 0
-            ? <PasoDesglose valor={desglose.pendientes} tono="aviso" texto="todavía no se han analizado; aparecerán cuando se clasifiquen" />
-            : <PasoDesglose valor="0" texto="pendientes de analizar" />}
-          <PasoDesglose valor={desglose.sobreProfesor} tono="fuerte" texto="hablan del profesor y se muestran abajo" />
-        </div>
-        {desglose.deOtrasPreguntas > 0 && (
-          <p className="text-[11px] text-slate-400 mt-2">
-            Además, <b className="text-slate-200">{desglose.deOtrasPreguntas}</b> comentario{desglose.deOtrasPreguntas === 1 ? '' : 's'} escrito{desglose.deOtrasPreguntas === 1 ? '' : 's'} en otras preguntas (plataforma, contenidos o general) también habla{desglose.deOtrasPreguntas === 1 ? '' : 'n'} del profesor.
-            Total para leer: <b className="text-slate-200">{totalMostrados}</b>.
-          </p>
-        )}
-      </div>
-
-      {/* filtro de tema */}
+      {/* Resumen */}
       <div>
-        <p className="text-[11px] text-slate-500 mb-1.5">Filtrar por tema:</p>
-        <div className="flex flex-wrap gap-1.5">
-          {[{ key: 'todos', label: 'Todos los temas' }, ...TEMAS_PROFESOR_].map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTema(t.key)}
-              className={'text-[11px] px-2.5 py-1 rounded-full border transition-colors ' + (tema === t.key ? 'text-white' : 'border-ink-600 text-slate-400 hover:text-slate-200')}
-              style={tema === t.key ? { borderColor: color, backgroundColor: color + '33' } : undefined}
-              title={t.descripcion || undefined}
-            >
-              {t.label}
-            </button>
+        <p className="text-sm text-slate-300 mb-2">
+          <b className="text-slate-100">{total}</b> comentario{total === 1 ? '' : 's'} de estudiantes sobre {docente.nombre} en {etiquetaPeriodo}:
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {SENTIMIENTOS_FICHA_.map((s) => (
+            <div key={s.key} className="rounded-lg border px-3 py-2" style={{ borderColor: s.color + '55', backgroundColor: s.color + '12' }}>
+              <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: s.color }}>{PLURAL_SENT_[s.key]}</div>
+              <div className="text-2xl font-bold text-slate-100 leading-tight">{porSent[s.key].length} <span className="text-sm font-semibold text-slate-400">{total ? `(${pct(porSent[s.key].length)}%)` : ''}</span></div>
+              <div className="text-[10.5px] text-slate-400">{AYUDA_SENT_[s.key]}</div>
+            </div>
           ))}
         </div>
-        {temaMeta && <p className="text-[11px] text-slate-500 mt-1.5">{temaMeta.descripcion} Con este filtro: {propDoc.total} de los {totalMostrados} comentarios.</p>}
+        {desglose.pendientes > 0 && (
+          <p className="text-[11px] text-amber-300 mt-2">⚠ {desglose.pendientes} comentario{desglose.pendientes === 1 ? '' : 's'} de este docente todavía no se ha{desglose.pendientes === 1 ? '' : 'n'} analizado; aparecerá{desglose.pendientes === 1 ? '' : 'n'} aquí cuando se clasifiquen.</p>
+        )}
+        <details className="mt-2 text-[11px] text-slate-400">
+          <summary className="cursor-pointer text-slate-500 hover:text-slate-300 select-none">¿Por qué hay {desglose.escritos} comentarios escritos y aquí se ven {total}?</summary>
+          <ul className="mt-1.5 ml-4 list-disc space-y-0.5">
+            <li><b className="text-slate-300">{desglose.escritos}</b> estudiantes escribieron algo en la pregunta sobre el docente.</li>
+            <li><b className="text-slate-300">{desglose.genericos}</b> fueron respuestas genéricas que no mencionan al profesor ("excelente", "todo bien", "N/A", "ninguno"): no se muestran.</li>
+            {desglose.otros > 0 && <li><b className="text-slate-300">{desglose.otros}</b> hablaban de otra cosa (plataforma, contenidos, horarios…): no se muestran.</li>}
+            {desglose.pendientes > 0 && <li><b className="text-slate-300">{desglose.pendientes}</b> todavía no se han analizado.</li>}
+            <li><b className="text-slate-300">{desglose.sobreProfesor}</b> hablan del profesor y se muestran.</li>
+            {desglose.deOtrasPreguntas > 0 && <li>Se suman <b className="text-slate-300">{desglose.deOtrasPreguntas}</b> que el estudiante escribió en otras preguntas del formulario pero también hablan del profesor.</li>}
+          </ul>
+        </details>
       </div>
 
-      {/* 2. Comparación con todos los docentes */}
-      {propDoc.total > 0 && (
-        <div className="rounded-lg border border-ink-700 bg-ink-950/40 p-3 space-y-3">
-          <p className="text-xs font-semibold text-slate-200">¿Cómo le va comparado con los demás docentes?</p>
-          <p className="text-[12px] text-slate-300 leading-relaxed">
-            De los <b>{propDoc.total}</b> comentarios sobre {docente.nombre}{temaMeta ? ` (tema: ${temaMeta.label.toLowerCase()})` : ''}, el{' '}
-            {SENTIMIENTOS_FICHA_.map((s, i) => (
-              <span key={s.key}>
-                <b style={{ color: s.color }}>{propDoc.pct[s.key]}% son {PLURAL_SENT_[s.key]}</b>
-                {i === 0 ? ', el ' : i === 1 ? ' y el ' : '.'}
-              </span>
-            ))}
-            {' '}En el promedio de todos los docentes ({propInst.total} comentarios): {SENTIMIENTOS_FICHA_.map((s) => `${propInst.pct[s.key]}% ${PLURAL_SENT_[s.key]}`).join(', ')}.
-          </p>
-          <BarraProporciones titulo={docente.nombre} prop={propDoc} />
-          <BarraProporciones titulo="Promedio de todos los docentes" prop={propInst} />
-          <div className="grid md:grid-cols-3 gap-2">
-            {SENTIMIENTOS_FICHA_.map((s) => {
-              const v = veredicto(s);
-              return (
-                <div key={s.key} className="rounded-md border border-ink-700 px-2.5 py-2">
-                  <div className="flex items-center gap-1.5 text-[11px] font-bold" style={{ color: s.color }}>
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />{s.label}
-                  </div>
-                  <p className="text-[11px] text-slate-300 mt-1">
-                    <b>{propDoc.n[s.key]}</b> de {propDoc.total} ({propDoc.pct[s.key]}%) · todos los docentes: {propInst.pct[s.key] ?? '—'}%
-                  </p>
-                  {v && <span className={'inline-block mt-1.5 text-[10.5px] font-semibold px-1.5 py-0.5 rounded border ' + v.clase}>{v.texto}</span>}
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-[10.5px] text-slate-500">"Similar" = menos de 5 puntos de diferencia con el promedio.</p>
-          {propDoc.total < 5 && (
-            <p className="text-[11px] text-amber-300">Ojo: son solo {propDoc.total} comentario{propDoc.total === 1 ? '' : 's'}; uno solo cambia mucho los porcentajes. Tómalo como referencia.</p>
-          )}
-        </div>
-      )}
-
-      {/* 3. Los comentarios */}
-      {propDoc.total === 0 ? (
-        <p className="text-sm text-slate-500 py-4 text-center">No hay comentarios sobre el profesor en {etiquetaPeriodo}{temaMeta ? ' con este tema' : ''}.</p>
+      {/* Comentarios */}
+      {total === 0 ? (
+        <p className="text-sm text-slate-500 py-4 text-center">No hay comentarios sobre el profesor en {etiquetaPeriodo}.</p>
       ) : (
         <div className="grid md:grid-cols-3 gap-3">
           {SENTIMIENTOS_FICHA_.map((s) => {
             const lista = porSent[s.key];
             return (
               <div key={s.key} className="rounded-md border bg-ink-900/60 flex flex-col" style={{ borderColor: s.color + '40' }}>
-                <div className="px-3 py-1.5 border-b" style={{ borderColor: s.color + '30', backgroundColor: s.color + '14' }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: s.color }}>{s.label} · {lista.length}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500 mt-0.5">El estudiante {AYUDA_SENT_[s.key]}.</p>
+                <div className="px-3 py-1.5 border-b flex items-center justify-between gap-2" style={{ borderColor: s.color + '30', backgroundColor: s.color + '14' }}>
+                  <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: s.color }}>{PLURAL_SENT_[s.key]} · {lista.length}</span>
                   {lista.length > 0 && (
                     <button
                       type="button"
                       onClick={() => descargar(s, lista)}
-                      title={`Descargar los ${lista.length} comentarios "${s.label}" de este docente en un archivo de texto`}
-                      className="mt-1.5 w-full flex items-center justify-center gap-1.5 text-[10.5px] font-semibold px-2 py-1 rounded border border-slate-600 text-slate-300 hover:text-white hover:border-slate-400 hover:bg-ink-800 transition-colors"
+                      title={`Descargar los ${lista.length} comentarios ${PLURAL_SENT_[s.key].toLowerCase()} en un archivo de texto`}
+                      className="text-[10.5px] font-semibold px-2 py-0.5 rounded border border-slate-600 text-slate-300 hover:text-white hover:border-slate-400 hover:bg-ink-800 transition-colors"
                     >
-                      ⬇ Descargar .txt
+                      ⬇ .txt
                     </button>
                   )}
                 </div>
-                <div className="p-2 space-y-2 max-h-80 overflow-y-auto">
+                <div className="p-2 space-y-2 max-h-96 overflow-y-auto">
                   {lista.length === 0 ? (
                     <p className="text-[11px] text-slate-600 italic px-1 py-2">Sin comentarios.</p>
                   ) : lista.map((c, i) => (
                     <div key={i} className="bg-ink-800/70 rounded px-2 py-1.5">
-                      <div className="text-[9.5px] text-slate-500 mb-0.5">
-                        Pregunta: {campoMeta[c.campo_origen] || c.campo_origen}
-                        {c.mes_calificacion && <span> · {c.mes_calificacion}</span>}
-                        {c.categoria_programa && <span> · {c.categoria_programa}</span>}
-                      </div>
-                      <p className="text-[11px] text-slate-200 leading-snug">"{c.texto}"</p>
+                      {mesSeleccionado === 'TODOS' && c.mes_calificacion && <div className="text-[9.5px] text-slate-500 mb-0.5">{c.mes_calificacion}</div>}
+                      <p className="text-[11.5px] text-slate-200 leading-snug">"{c.texto}"</p>
                     </div>
                   ))}
                 </div>
