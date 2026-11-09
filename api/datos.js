@@ -118,9 +118,20 @@ export default async function handler(req, res) {
     let salida = filas;
     if (consulta === 'conteos_respuestas') salida = contarRespuestas(filas);
     if (consulta === 'comentarios_docente') {
-      salida = filas.map((f) => {
+      // 2026-11-09: además van TODOS los comentarios de la pregunta del
+      // docente (también genéricos tipo "excelente"/"N/A" y los de otro
+      // tema), sin texto, solo para explicar en la ficha por qué el número de
+      // comentarios escritos no es el mismo que el de comentarios mostrados.
+      const vistos = new Set(filas.map((f) => f.id));
+      const campoDocente = await leerTodo('doc_analisis_cualitativo', 'select=id,campo_origen,temas,sentimiento,doc_respuestas_consolidada(mes_calificacion,categoria_programa,docente)&campo_origen=eq.docente&order=id.asc');
+      const todas = filas.concat(campoDocente.filter((f) => !vistos.has(f.id)));
+      salida = todas.map((f) => {
         const r = f.doc_respuestas_consolidada || {};
-        return { campo_origen: f.campo_origen, temas: f.temas || [], sentimiento: f.sentimiento, texto: f.texto, mes_calificacion: r.mes_calificacion, categoria_programa: r.categoria_programa, docente: r.docente };
+        const temas = f.temas || [];
+        const tipo = vistos.has(f.id) ? 'profesor' : temas.includes('SIN_SUSTANCIA') ? 'generico' : 'otro';
+        const fila = { tipo, campo_origen: f.campo_origen, mes_calificacion: r.mes_calificacion, categoria_programa: r.categoria_programa, docente: r.docente };
+        if (tipo === 'profesor') Object.assign(fila, { temas, sentimiento: f.sentimiento, texto: f.texto });
+        return fila;
       });
     }
     res.status(200).json({ filas: salida });
