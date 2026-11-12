@@ -103,6 +103,8 @@ export default function EvaluacionDocentePanel() {
     })();
   }, []);
 
+  const [datosInvitacion, setDatosInvitacion] = useState(null); // materias por cerrar (TablaGrupos -> rail)
+
   async function onRefrescarVista() {
     await cargarMeses().catch((e) => setError(e.message || String(e)));
     setRecargaKey((k) => k + 1);
@@ -147,6 +149,7 @@ export default function EvaluacionDocentePanel() {
         <div className="order-2 lg:order-3 space-y-6">
           <EvaluacionesActivas meses={meses} activos={activos} onToggle={onToggle} />
           <LinksPorCategoriaYMes meses={meses} />
+          <InvitacionAnticipadaMasiva datos={datosInvitacion} />
         </div>
       )}
 
@@ -154,7 +157,7 @@ export default function EvaluacionDocentePanel() {
         {error && (
           <div className="mb-4 text-sm text-red-300 bg-red-950/40 border border-red-900 rounded-md px-3 py-2">{error}</div>
         )}
-        {vista === VISTAS.TABLA && <TablaGrupos key={recargaKey} meses={meses} activos={activos} incluirModulo0={incluirModulo0} />}
+        {vista === VISTAS.TABLA && <TablaGrupos key={recargaKey} meses={meses} activos={activos} incluirModulo0={incluirModulo0} onDatosInvitacion={setDatosInvitacion} />}
         {vista === VISTAS.ESTADISTICAS && <Estadisticas key={recargaKey} meses={meses} incluirModulo0={incluirModulo0} />}
         {vista === VISTAS.CUALITATIVO && <Cualitativo key={recargaKey} />}
         {vista === VISTAS.RANKING && <RankingDocente key={recargaKey} incluirModulo0={incluirModulo0} />}
@@ -1042,7 +1045,7 @@ function coincideBusquedaGrupos_(texto, consulta) {
   return q.split(/\s+/).every((tok) => base.includes(tok));
 }
 
-function TablaGrupos({ meses, activos, incluirModulo0 }) {
+function TablaGrupos({ meses, activos, incluirModulo0, onDatosInvitacion }) {
   const [filasRaw, setFilasRaw] = useState([]);
   const [conteos, setConteos] = useState([]); // respuestas por categoria+mes+materia
   const [combos, setCombos] = useState([]);
@@ -1254,6 +1257,50 @@ function TablaGrupos({ meses, activos, incluirModulo0 }) {
       .forEach((f) => (m[f.categoria_programa] || (m[f.categoria_programa] = [])).push(f));
     return m;
   }, [filasFiltradas, enCombo]);
+
+  // 2026-11-12: materias EN CURSO que cierran en ≤6 días (grupos normales y
+  // combinados), para la "Invitación anticipada masiva" del rail derecho.
+  // No depende de los filtros de la tabla: siempre son todas las que cierran.
+  useEffect(() => {
+    if (!onDatosInvitacion || cargando) return;
+    const items = [];
+    filas.forEach((f) => {
+      if (enCombo.has(f.group_id) || f.estado_materia !== 'en_curso') return;
+      if (!incluirModulo0 && esModulo0_(f.materia)) return;
+      const dias = diasParaCierre_(f);
+      if (dias == null || dias > 6) return;
+      items.push({ clave: f.group_id, groupIds: [f.group_id], dias, f });
+    });
+    combos.forEach((c) => {
+      const ms = (c.member_group_ids || []).map((gid) => filas.find((x) => x.group_id === gid)).filter(Boolean);
+      const m0 = ms[0];
+      if (!m0 || m0.estado_materia !== 'en_curso') return;
+      if (!incluirModulo0 && ms.some((m) => esModulo0_(m.materia))) return;
+      const dias = diasParaCierre_(m0);
+      if (dias == null || dias > 6) return;
+      const tot = totalesRespuestasCombo_(ms);
+      items.push({
+        clave: 'combo-' + c.id,
+        groupIds: ms.map((m) => m.group_id),
+        dias,
+        f: {
+          ...m0,
+          materia: c.subject_name || m0.materia,
+          tutor_calendario: c.tutor_calendario || m0.tutor_calendario,
+          respuestas: tot.respuestas,
+          asistentes_min_1_sesion: tot.asistentes ?? m0.asistentes_min_1_sesion,
+          carreras_combo: Array.from(new Set(ms.map((m) => m.categoria_programa).filter(Boolean))),
+          miembros_combo: ms.map((x) => ({ carrera: x.categoria_programa, id_grupo_mapeo: x.id_grupo_mapeo, group_id: x.group_id, listado_url: x.listado_url || null })),
+        },
+      });
+    });
+    onDatosInvitacion({
+      items,
+      dirIdx,
+      alertas,
+      recargarAlertas: async () => { const frescas = await fetchAlertasCierre().catch(() => null); if (frescas) setAlertas(frescas); },
+    });
+  }, [filas, combos, enCombo, dirIdx, alertas, incluirModulo0, cargando, onDatosInvitacion]);
 
   // combos visibles según el filtro de meses (con sus filas miembro resueltas)
   const combosVisibles = useMemo(() => {
@@ -5145,6 +5192,263 @@ function LinksPorCategoriaYMes({ meses }) {
           );
         })}
       </div>
+    </section>
+  );
+}
+
+/* ==========================================================================
+ *  INVITACIÓN ANTICIPADA MASIVA (2026-11-12, a pedido del usuario): debajo
+ *  de "Links por categoría + mes", en el rail derecho de la vista Grupos.
+ *  Las materias EN CURSO que están por cerrar se agrupan en 3 tramos
+ *  (≤1 día, 2-3 días, 4-6 días) y se puede enviar la invitación anticipada
+ *  (la misma del botón "Invitar a enviar la encuesta" del modal de Gestión)
+ *  a todas las pendientes de un tramo con un clic. UN CORREO POR MATERIA
+ *  (decisión del usuario). Enviado/pendiente sale del historial
+ *  doc_alertas_cierre (tipo en_curso, canal email, estado enviado): una
+ *  materia cuenta como enviada en un tramo si se le mandó la invitación
+ *  cuando estaba en ESE tramo (un envío a 6 días no cubre el de 1 día).
+ *  Sin envío programado por ahora (pedido del usuario).
+ * ======================================================================== */
+const TRAMOS_INVITACION_ = [
+  { key: 't1', label: '1 día', desc: 'cierran hoy o mañana', min: 0, max: 1, color: '#f43f5e' },
+  { key: 't3', label: '3 días', desc: 'cierran en 2 o 3 días', min: 2, max: 3, color: '#f59e0b' },
+  { key: 't6', label: '6 días', desc: 'cierran en 4 a 6 días', min: 4, max: 6, color: '#38bdf8' },
+];
+const tramoDeDias_ = (d) => (d == null ? null : TRAMOS_INVITACION_.find((t) => d >= t.min && d <= t.max)?.key || null);
+const fechaBogotaDe_ = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+const diasEntre_ = (a, b) => {
+  const ms = (s) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+  return Math.round((ms(b) - ms(a)) / 86400000);
+};
+const ddmm_ = (s) => (s && /^\d{4}-\d{2}-\d{2}/.test(s) ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : '—');
+
+/** Mismo payload que manda el botón individual del modal de Gestión. */
+function payloadInvitacionEnCurso_(f, correo, dias) {
+  const urlEncuesta = f.categoria_programa && f.mes_calificacion
+    ? `${window.location.origin}/evaluar/${slug(f.categoria_programa)}/${slug(f.mes_calificacion)}`
+    : null;
+  const urlsEncuesta = f.carreras_combo && f.carreras_combo.length > 1 && f.mes_calificacion
+    ? f.carreras_combo.map((c) => ({ carrera: c, url: `${window.location.origin}/evaluar/${slug(c)}/${slug(f.mes_calificacion)}` }))
+    : null;
+  return {
+    tipo: 'en_curso',
+    destino: correo,
+    dias_restantes: dias,
+    group_id: f.group_id,
+    id_grupo_mapeo: f.id_grupo_mapeo,
+    categoria_programa: f.categoria_programa,
+    mes_calificacion: f.mes_calificacion,
+    materia: f.materia,
+    tutor_calendario: f.tutor_calendario,
+    correo_tutor: correo || null,
+    cantidad_estudiantes_listas: f.cantidad_estudiantes_listas ?? null,
+    asistentes_min_1_sesion: f.asistentes_min_1_sesion ?? null,
+    respuestas: f.respuestas ?? 0,
+    respuestas_antes: f.respuestas ?? 0,
+    fecha_calendario_inicio: f.fecha_calendario_inicio || null,
+    fecha_calendario_fin: f.fecha_calendario_fin || null,
+    listado_url: f.listado_url || null,
+    url_sis: urlSisGrupo(f.group_id),
+    url_encuesta: urlEncuesta,
+    urls_encuesta: urlsEncuesta,
+  };
+}
+
+function InvitacionAnticipadaMasiva({ datos }) {
+  const [tramo, setTramo] = useState('t1');
+  const [ver, setVer] = useState('todas'); // 'todas' | 'pendientes' | 'enviadas'
+  const [desmarcadas, setDesmarcadas] = useState(() => new Set());
+  const [confirmar, setConfirmar] = useState(false);
+  const [progreso, setProgreso] = useState(null); // { hechos, total }
+  const [resultados, setResultados] = useState({}); // clave -> { ok, texto }
+  const [resumen, setResumen] = useState(null); // { ok, error }
+
+  const filas = useMemo(() => {
+    if (!datos) return [];
+    const { items, dirIdx, alertas } = datos;
+    return items.map((it) => {
+      const fin = String(it.f.fecha_calendario_fin || '').slice(0, 10);
+      const correo = dirIdx?.porNombre?.get(normalizar(it.f.tutor_calendario || ''))?.correo_institucional || '';
+      const envios = (alertas || [])
+        .filter((a) => a.tipo === 'en_curso' && a.canal === 'email' && a.estado === 'enviado' && it.groupIds.includes(a.group_id) && a.creado_en)
+        .map((a) => {
+          const fecha = fechaBogotaDe_(a.creado_en);
+          const d = /^\d{4}-\d{2}-\d{2}$/.test(fin) ? diasEntre_(fecha, fin) : null;
+          return { fecha, tramo: d != null && d > 6 ? 'antes' : tramoDeDias_(Math.max(0, d ?? 0)) };
+        });
+      const tramoActual = tramoDeDias_(it.dias);
+      const enviada = envios.find((e) => e.tramo === tramoActual) || null;
+      const otros = envios.filter((e) => e.tramo !== tramoActual);
+      return { ...it, fin, correo, tramo: tramoActual, enviada, otros };
+    }).sort((a, b) => a.dias - b.dias || String(a.f.materia || '').localeCompare(String(b.f.materia || ''), 'es'));
+  }, [datos]);
+
+  if (!datos) {
+    return (
+      <section className="bg-ink-900 border border-ink-700 rounded-lg p-4">
+        <h2 className="text-sm font-semibold text-slate-100">Invitación anticipada masiva</h2>
+        <p className="text-xs text-slate-500 mt-2">Cargando materias por cerrar…</p>
+      </section>
+    );
+  }
+
+  const delTramo = filas.filter((x) => x.tramo === tramo);
+  const pendientes = delTramo.filter((x) => !x.enviada);
+  const sinCorreo = pendientes.filter((x) => !x.correo);
+  const seleccionables = pendientes.filter((x) => x.correo);
+  const seleccionadas = seleccionables.filter((x) => !desmarcadas.has(x.clave));
+  const visibles = delTramo.filter((x) => (ver === 'pendientes' ? !x.enviada : ver === 'enviadas' ? !!x.enviada : true));
+  const enviando = !!progreso;
+  const meta = TRAMOS_INVITACION_.find((t) => t.key === tramo);
+
+  const toggle = (clave) => setDesmarcadas((prev) => {
+    const n = new Set(prev);
+    if (n.has(clave)) n.delete(clave); else n.add(clave);
+    return n;
+  });
+
+  async function enviarTodas() {
+    setConfirmar(false);
+    setResumen(null);
+    const lista = seleccionadas;
+    let ok = 0, error = 0;
+    setProgreso({ hechos: 0, total: lista.length });
+    for (let i = 0; i < lista.length; i++) {
+      const x = lista[i];
+      try {
+        const r = await enviarReporteGestion(payloadInvitacionEnCurso_(x.f, x.correo, x.dias));
+        if (r && r.ok === false) throw new Error(r.error || r.detalle || 'n8n respondió con error');
+        ok += 1;
+        setResultados((prev) => ({ ...prev, [x.clave]: { ok: true } }));
+      } catch (e) {
+        error += 1;
+        setResultados((prev) => ({ ...prev, [x.clave]: { ok: false, texto: e.message || String(e) } }));
+      }
+      setProgreso({ hechos: i + 1, total: lista.length });
+      if (i < lista.length - 1) await new Promise((res) => setTimeout(res, 700));
+    }
+    await datos.recargarAlertas?.();
+    setProgreso(null);
+    setResumen({ ok, error });
+  }
+
+  return (
+    <section className="bg-ink-900 border border-ink-700 rounded-lg p-4 space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-slate-100">Invitación anticipada masiva</h2>
+        <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">Correo al tutor de cada materia en curso que está por cerrar, invitándolo a enviar la encuesta a sus estudiantes. Un correo por materia.</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-1.5">
+        {TRAMOS_INVITACION_.map((t) => {
+          const del = filas.filter((x) => x.tramo === t.key);
+          const pend = del.filter((x) => !x.enviada).length;
+          const activo = tramo === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              disabled={enviando}
+              onClick={() => { setTramo(t.key); setConfirmar(false); setResumen(null); }}
+              className={'rounded-md border px-2 py-1.5 text-left transition-colors disabled:cursor-wait ' + (activo ? 'bg-ink-800' : 'border-ink-700 hover:bg-ink-800/60')}
+              style={activo ? { borderColor: t.color } : undefined}
+              title={'Materias que ' + t.desc}
+            >
+              <div className="text-[11px] font-bold" style={{ color: t.color }}>A {t.label}</div>
+              <div className="text-[10px] text-slate-400 leading-tight">{del.length} materia{del.length === 1 ? '' : 's'}</div>
+              <div className={'text-[10px] leading-tight ' + (pend ? 'text-amber-300' : 'text-emerald-400')}>{pend ? `${pend} pendiente${pend === 1 ? '' : 's'}` : del.length ? 'todas enviadas' : '—'}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="text-[11px] text-slate-400">
+        Materias que {meta.desc}: <b className="text-emerald-300">{delTramo.length - pendientes.length} enviada{delTramo.length - pendientes.length === 1 ? '' : 's'}</b> · <b className="text-amber-300">{pendientes.length} pendiente{pendientes.length === 1 ? '' : 's'}</b>
+        {sinCorreo.length > 0 && <> · <b className="text-rose-300">{sinCorreo.length} sin correo</b></>}
+      </div>
+
+      <div className="flex gap-1">
+        {[['todas', 'Todas'], ['pendientes', 'Pendientes'], ['enviadas', 'Enviadas']].map(([k, l]) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => setVer(k)}
+            className={'text-[10.5px] px-2 py-0.5 rounded-full border ' + (ver === k ? 'border-accent-500 text-accent-200 bg-accent-500/15' : 'border-ink-600 text-slate-400 hover:text-slate-200')}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div className="space-y-1 max-h-[360px] overflow-y-auto pr-1">
+        {visibles.length === 0 ? (
+          <p className="text-[11px] text-slate-500 italic py-2">{delTramo.length === 0 ? 'No hay materias en este tramo.' : 'Nada para mostrar con este filtro.'}</p>
+        ) : visibles.map((x) => {
+          const res = resultados[x.clave];
+          const marcable = !x.enviada && !!x.correo;
+          return (
+            <label key={x.clave} className={'flex items-start gap-2 rounded-md border border-ink-700 bg-ink-800/50 px-2 py-1.5 ' + (marcable && !enviando ? 'cursor-pointer hover:bg-ink-800' : '')}>
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-sky-500"
+                disabled={!marcable || enviando}
+                checked={marcable && !desmarcadas.has(x.clave)}
+                onChange={() => toggle(x.clave)}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-[11.5px] text-slate-200 font-semibold truncate" title={x.f.materia}>{x.f.materia || '(sin materia)'}</div>
+                <div className="text-[10px] text-slate-500 truncate">
+                  {x.f.tutor_calendario || 'sin tutor'} · {(x.f.carreras_combo && x.f.carreras_combo.length > 1) ? 'combinado' : x.f.categoria_programa} · cierra {ddmm_(x.fin)}{x.dias === 0 ? ' (hoy)' : ''}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {x.f.respuestas ?? 0} resp.{x.f.asistentes_min_1_sesion != null ? ` de ${x.f.asistentes_min_1_sesion} asistentes` : ''}
+                  {x.otros.length > 0 && <div className="text-emerald-500/80">Ya invitada antes: {x.otros.map((e) => `${e.tramo === 'antes' ? 'con más de 6 días' : 'a ' + TRAMOS_INVITACION_.find((t) => t.key === e.tramo)?.label} (${ddmm_(e.fecha)})`).join(', ')}</div>}
+                </div>
+                {res && !res.ok && <div className="text-[10px] text-rose-300 break-words">Error: {res.texto}</div>}
+              </div>
+              <span className={'shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded border ' + (
+                x.enviada ? 'text-emerald-300 border-emerald-800/70 bg-emerald-950/30'
+                  : res && !res.ok ? 'text-rose-300 border-rose-800/70'
+                  : !x.correo ? 'text-rose-300 border-rose-800/70'
+                  : 'text-slate-400 border-ink-600')}
+                title={!x.correo && !x.enviada ? 'El tutor no tiene correo institucional en el directorio' : undefined}
+              >
+                {x.enviada ? `✓ Enviada ${ddmm_(x.enviada.fecha)}` : res && !res.ok ? 'Error' : !x.correo ? 'Sin correo' : 'Pendiente'}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+
+      {progreso ? (
+        <div className="space-y-1">
+          <div className="text-[11px] text-sky-200">Enviando {progreso.hechos} de {progreso.total}… no cierres esta pestaña.</div>
+          <div className="h-1.5 rounded bg-ink-800 overflow-hidden"><div className="h-full bg-sky-500 transition-all" style={{ width: (progreso.total ? (progreso.hechos / progreso.total) * 100 : 0) + '%' }} /></div>
+        </div>
+      ) : confirmar ? (
+        <div className="rounded-md border border-sky-700/60 bg-sky-950/30 p-2.5 space-y-2">
+          <p className="text-[11.5px] text-sky-100">Se van a enviar <b>{seleccionadas.length}</b> correo{seleccionadas.length === 1 ? '' : 's'} (uno por materia) a los tutores de las materias que {meta.desc}. ¿Continuar?</p>
+          <div className="flex gap-2">
+            <button type="button" onClick={enviarTodas} className="flex-1 rounded-md bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold py-1.5">Sí, enviar</button>
+            <button type="button" onClick={() => setConfirmar(false)} className="flex-1 rounded-md border border-ink-600 text-slate-300 text-xs py-1.5 hover:bg-ink-800">Cancelar</button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          disabled={!seleccionadas.length}
+          onClick={() => { setConfirmar(true); setResumen(null); }}
+          className="w-full rounded-md border border-sky-700/60 bg-sky-950/30 px-3 py-2 text-sm font-semibold text-sky-200 hover:bg-sky-950/50 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {seleccionadas.length ? `Enviar invitación a ${seleccionadas.length} materia${seleccionadas.length === 1 ? '' : 's'}` : 'No hay pendientes para enviar'}
+        </button>
+      )}
+      {resumen && (
+        <div className={'text-[11.5px] ' + (resumen.error ? 'text-amber-300' : 'text-emerald-300')}>
+          {resumen.ok} enviada{resumen.ok === 1 ? '' : 's'}{resumen.error ? ` · ${resumen.error} con error (quedan como pendientes; puedes reintentar)` : '. Listo.'}
+        </div>
+      )}
+      <p className="text-[10px] text-slate-600 leading-snug">Una materia cuenta como enviada en un tramo solo si la invitación salió cuando estaba en ese tramo. Solo correo; WhatsApp sigue siendo desde Gestión.</p>
     </section>
   );
 }
